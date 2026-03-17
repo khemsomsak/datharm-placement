@@ -44,12 +44,76 @@
 ###################
 # Import Database # 
 ###################
+  
+  #Variable name check
+  
 
-# 1. Import tabs from sample MCHTrack dataset ----------------------------------
+# 1. Import and merge MCHTrack Kano + Katsina dataset --------------------------
 
-  mch_linelisted <- read_xlsx("02_data/01_mchtrack-sample.xlsx", 
-                               sheet = "SampleLinelisted") %>%
-    clean_names()
+  #Line listed
+    mch_linelisted <- rbind(
+      read.csv("02_data/01_mchtrack_kano/linelisted.csv") %>%
+        mutate(dataset = "kano") %>%
+        clean_names(),
+      read.csv("02_data/02_mchtrack_katsina/linelisted.csv") %>%
+        mutate(dataset = "katsina") %>%
+        rename(distance_to_hf = hf_distance) %>%
+        clean_names()
+    )
+  
+  #Identified Zero-Dose
+  
+    #Import Kano and Katsina individually
+    mch_idzd_kano <- read.csv("02_data/01_mchtrack_kano/identifiedzd.csv") %>%
+      mutate(dataset = "kano") %>%
+      clean_names()
+    mch_idzd_katsina <- read.csv("02_data/02_mchtrack_katsina/identifiedzd.csv") %>%
+      mutate(dataset = "katsina") %>%
+      clean_names()
+    
+    #Identify non-overlapping variables
+    setdiff(variable.names(mch_idzd_kano),
+      variable.names(mch_idzd_katsina))
+    setdiff(variable.names(mch_idzd_katsina),
+            variable.names(mch_idzd_kano))
+    
+    #Combine overlapping variables 
+    mch_idzd <- bind_rows(
+      mch_idzd_kano %>% select(all_of(intersect(names(mch_idzd_kano), names(mch_idzd_katsina)))),
+      mch_idzd_katsina %>% select(all_of(intersect(names(mch_idzd_kano), names(mch_idzd_katsina))))
+    )
+  
+  #Defaulter
+      
+    #Import 
+    mch_defaulter_kano <- read.csv("02_data/01_mchtrack_kano/defaulter.csv") %>%
+      mutate(dataset = "kano") %>%
+      clean_names()
+    mch_defaulter_katsina <- read.csv("02_data/02_mchtrack_katsina/defaulter.csv") %>%
+      mutate(dataset = "katsina") %>%
+      clean_names()
+    
+    setdiff(variable.names(mch_defaulter_kano),
+            variable.names(mch_defaulter_katsina))
+    setdiff(variable.names(mch_defaulter_katsina),
+            variable.names(mch_defaulter_kano))
+    
+  #Defaulter Tracing
+    
+    #Import Kano and Katsina individually
+    mch_defaulter_tracing_kano <- read.csv("02_data/01_mchtrack_kano/defaulter-tracing.csv") %>%
+      mutate(dataset = "kano") %>%
+      clean_names()
+    mch_defaulter_tracing_katsina <- read.csv("02_data/02_mchtrack_katsina/defaulter-tracing.csv") %>%
+      mutate(dataset = "katsina") %>%
+      clean_names()  
+    
+    
+    
+    
+    
+    
+    
   mch_facilityvisit <- read_xlsx("02_data/01_mchtrack-sample.xlsx", 
                                   sheet = "SampleFacility_Visit") %>%
     clean_names()
@@ -122,7 +186,45 @@
 ############
 # Analysis # 
 ############
+ 
+  #Data checks on linelisted, there are 89,177 distinct IDs.
+  nrow(mch_linelisted)
   
+  mch_linelisted %>%
+    select(pseudo_id) %>% 
+    distinct() %>%
+    nrow()
+  
+  mch_linelisted %>%
+    group_by(dataset,zero_dose) %>%
+    summarise(count = n())
+  
+  #Data checks on overlapping ID variable between tables
+  
+  #Example of overlapping ID - bc93bc7d-bd9d-4ae6-a966-b711002dc2b5
+  intersect(
+    mch_idzd %>% 
+      select(pseudo_id),
+    mch_linelisted %>%
+      filter(zero_dose == TRUE) %>%
+      select(pseudo_id)
+    )
+  
+  #Example of ID in linelisted but NOT idzd - 7649da34-c09c-4f0d-8793-b4f1cd5905c2
+  setdiff(
+    mch_linelisted %>%
+      filter(zero_dose == TRUE) %>%
+      select(pseudo_id),
+    mch_idzd %>% 
+      select(pseudo_id)
+    )
+  
+  #Try left-joining
+  left_join()
+  
+  
+  
+   
   #Plot rainfall anomaly in program period
   ggplot(rainfall, aes(x = date, y = one_mnth_anomaly)) +
     geom_line()
