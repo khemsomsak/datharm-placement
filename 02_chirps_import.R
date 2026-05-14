@@ -1,7 +1,7 @@
 ########################################################
 #  Import and Clean CHIRPS Precipitation Data          #
-#  Created on 13/5/2026                                 #
-#  Last Updated 13/5/2026                               #
+#  Created on 13/5/2026                                #
+#  Last Updated 13/5/2026                              #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -45,7 +45,7 @@
 # 1. Import rainfall CHIRPS dataset --------------------------------------------  
 
   data_file <- file.path(raw_dir, "nga-rainfall-subnat-5ytd.csv")
-  data_raw <- read_csv(raw_file, show_col_types = FALSE) %>%
+  data_raw <- read_csv(data_file, show_col_types = FALSE) %>%
     clean_names()
   
   
@@ -207,51 +207,3 @@
 #--------------------------(END)------------------------------#
   
   
-# 1. Set coordinate box that include Katsina and Kano --------------------------
-
-  #This is a simple rectangle that covers both states. 
-  bbox <- data.frame(
-    lon = c(6.5, 10.5),
-    lat = c(11.0, 14.5)
-  )
-
-# 2. Download CHIRPS data for the defined coordinates --------------------------
-  
-  #Set date range from program start to latest available  
-  chirps_data <- get_chirps(
-    object    = bbox,
-    dates     = c("2024-01-01", "2025-11-30"),
-    server    = "CHC",
-    resolution = 0.05,
-    period     = "monthly"
-  )  
-  
-  
-  #Check data
-  head(chirps_data)
-  nrow(chirps_data)
-  
-############
-# Analysis # 
-############
-  
-# 3. Calculate month anomaly using baseline for given month --------------------
-  
-  #This is trial run for   
-  chirps_anomaly <- chirps_data %>%
-    mutate(month = format(as.Date(date), "%m")) %>%
-    group_by(lon, lat, month) %>%
-    mutate(
-      mean_precip = mean(chirps, na.rm = TRUE),
-      anomaly     = chirps - mean_precip
-    ) %>%
-    ungroup()
-
-  
-##########
-# Export # 
-##########
-  
-
-#--------------------------(END)------------------------------#
-    
