@@ -1,7 +1,7 @@
 ########################################################
 #  Regression Analysis for MCHTrack and CHIRPS Data    #
 #  Created on 14/5/2026                                #
-#  Last Updated 14/5/2026                              #
+#  Last Updated 27/5/2026                              #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -43,12 +43,14 @@
 ###################
   
   #Load MCHTrack LGA panel ----
-  data_panel_lga <- readRDS(file.path(mchtrack_dir, "02_panel_lga_month.rds"))
+  data_panel_lga <- readRDS(file.path(mchtrack_dir, "01_panel_lga_month.rds"))
   
   #Load CHIRPS precipitation data ----
   data_chirps <- readRDS(file.path(chirps_dir, "02_chirps_data_kk_monthly.rds"))
                          
-                         
+  #Load dekadal panel and CHIRPS dekadal data (supplementary analysis) ----
+  data_panel_lga_dekad <- readRDS(file.path(mchtrack_dir, "01_panel_lga_dekad.rds"))
+  data_chirps_dekadal  <- readRDS(file.path(chirps_dir,   "02_chirps_data_kk_dekadal.rds"))                      
   
 ############
 # Analysis # 
@@ -63,7 +65,7 @@
     left_join(
       data_chirps %>% select(state, lga_name_mchtrack, year_month,
                              precip_actual_mm, precip_longterm_avg_mm,
-                             precip_anomaly_pct, dekads_present),
+                             precip_anomaly_pct, precip_abs_dev_mm, dekads_present),
       by = c("state",
              "lga_name" = "lga_name_mchtrack",
              "year_month")
@@ -89,6 +91,10 @@
       month_index       = as.integer(factor(year_month, levels = sort(unique(year_month)))),
       # lag precipitation anomaly by 1 month (lagged shock)
       precip_anomaly_lag1 = lag(precip_anomaly_pct, 1),
+      # absolute mm deviation — alternative climate variable per supervisor suggestion
+      precip_abs_dev_lag1 = lag(precip_abs_dev_mm, 1),
+      # raw mm value lagged
+      precip_actual_lag1  = lag(precip_actual_mm, 1),
       # exclude rimi lga in primary spec; include as sensitivity
       in_primary_sample = !rimi_flag
     ) %>%
@@ -219,18 +225,41 @@
     vcov = ~lga_name
   )
   
+  # 11a. Model 6: two-way FE — absolute mm deviation (alternative climate variable) ----
+  # Tests whether raw deviation in mm (not % of LTA) changes the null result
+  
+  m6 <- feols(
+    log_imm_visits ~ precip_abs_dev_mm + mean_hf_dist_km + log(enrolled_children + 1)
+    | lga_name + year_month,
+    data = data_analysis %>% filter(in_primary_sample),
+    vcov = ~lga_name
+  )
+  
+  # 11b. Model 7: two-way FE — raw actual mm (no deviation, no baseline assumption) ----
+  
+  m7 <- feols(
+    log_imm_visits ~ precip_actual_mm + mean_hf_dist_km + log(enrolled_children + 1)
+    | lga_name + year_month,
+    data = data_analysis %>% filter(in_primary_sample),
+    vcov = ~lga_name
+  ) 
+  
 # 12. Print regression table ----
   
   modelsummary(
-    list("OLS"        = m1,
-         "LGA FE"     = m2,
-         "Two-way FE" = m3,
-         "Lagged"     = m4,
-         "Incl. Rimi" = m5),
+    list("OLS"           = m1,
+         "LGA FE"        = m2,
+         "Two-way FE"    = m3,
+         "Lagged"        = m4,
+         "Incl. Rimi"    = m5,
+         "Abs dev mm"    = m6,
+         "Actual mm"     = m7),
     stars      = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
     coef_rename = c(
       "precip_anomaly_pct"             = "Precip anomaly (%)",
       "precip_anomaly_lag1"            = "Precip anomaly lag-1 (%)",
+      "precip_abs_dev_mm"              = "Precip abs deviation (mm)",
+      "precip_actual_mm"               = "Precip actual (mm)",
       "mean_hf_dist_km"                = "Mean HF distance (km)",
       "log(enrolled_children + 1)"     = "Log enrolled children"
     ),
@@ -239,8 +268,13 @@
   )
   
   modelsummary(
-    list("OLS" = m1, "LGA FE" = m2, "Two-way FE" = m3,
-         "Lagged" = m4, "Incl. Rimi" = m5),
+    list("OLS"           = m1,
+         "LGA FE"        = m2,
+         "Two-way FE"    = m3,
+         "Lagged"        = m4,
+         "Incl. Rimi"    = m5,
+         "Abs dev mm"    = m6,
+         "Actual mm"     = m7),
     stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01)
   )
   

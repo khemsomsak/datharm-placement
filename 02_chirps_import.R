@@ -1,7 +1,7 @@
 ########################################################
 #  Import and Clean CHIRPS Precipitation Data          #
 #  Created on 13/5/2026                                #
-#  Last Updated 13/5/2026                              #
+#  Last Updated 27/5/2026                              #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -77,10 +77,34 @@
       precip_actual_mm        = mean(as.numeric(r1h),     na.rm = TRUE),  # 1-month actual rainfall mm
       precip_longterm_avg_mm  = mean(as.numeric(r1h_avg), na.rm = TRUE),  # long-term average mm
       precip_anomaly_pct      = mean(as.numeric(r1q),     na.rm = TRUE),  # 1-month anomaly as % of LTA
+      # absolute mm deviation from long-term average — supervisor suggestion
+      precip_abs_dev_mm       = mean(as.numeric(r1h) - as.numeric(r1h_avg), na.rm = TRUE),
       .groups = "drop"
     ) %>%
     #Filter to the program date range (MCHTrack data starts Aug 2024)
     filter(year_month >= "2024-08")
+  
+  # Dekadal dataset — keep one row per pcode × dekad, no aggregation needed
+  # dekad_id: YYYY-MM-D1 / D2 / D3 based on day of month
+  data_kk_dekadal <- data_kk %>%
+    mutate(
+      date_parsed = as.Date(date),
+      dekad_num   = case_when(
+        day(date_parsed) <= 10 ~ "D1",
+        day(date_parsed) <= 20 ~ "D2",
+        TRUE                   ~ "D3"
+      ),
+      year_month       = format(date_parsed, "%Y-%m"),
+      dekad_id         = paste0(year_month, "-", dekad_num),
+      precip_actual_mm = as.numeric(r1h),
+      # absolute mm deviation from long-term dekadal average
+      precip_abs_dev_mm = as.numeric(r1h) - as.numeric(r1h_avg),
+      # keep anomaly pct for comparison
+      precip_anomaly_pct = as.numeric(r1q)
+    ) %>%
+    filter(date_parsed >= as.Date("2024-08-01")) %>%
+    select(pcode, year_month, dekad_id, dekad_num,
+           precip_actual_mm, precip_abs_dev_mm, precip_anomaly_pct)
   
   # Flag any months where we have fewer than 3 dekads (incomplete months)
   incomplete <- data_kk_monthly %>% filter(dekads_present < 3)
@@ -182,10 +206,30 @@
       precip_actual_mm,
       precip_longterm_avg_mm,
       precip_anomaly_pct,
+      precip_abs_dev_mm,
       dekads_present
     ) %>%
     arrange(state, lga_pcode, year_month)
   
+  # Build dekadal final: join LGA names onto dekadal data
+  data_final_dekadal <- data_kk_dekadal %>%
+    left_join(lga_lookup, by = "pcode") %>%
+    mutate(
+      state = case_when(
+        str_starts(pcode, "NG019") ~ "Kano",
+        str_starts(pcode, "NG020") ~ "Katsina"
+      )
+    ) %>%
+    select(
+      state,
+      lga_pcode = pcode,
+      lga_name_mchtrack,
+      year_month, dekad_id, dekad_num,
+      precip_actual_mm, precip_abs_dev_mm, precip_anomaly_pct
+    ) %>%
+    arrange(state, lga_pcode, dekad_id)
+  
+
   #Check for any PCODEs that didn't match the lookup
   unmatched <- data_final %>% filter(is.na(lga_name_mchtrack))
   if (nrow(unmatched) > 0) {
@@ -198,6 +242,8 @@
 
   # Save as native R object instead of CSV
   saveRDS(data_final, file.path(out_dir, "02_chirps_data_kk_monthly.rds"))
+  saveRDS(data_final_dekadal, file.path(out_dir, "02_chirps_data_kk_dekadal.rds"))
+  
   
   # Preview
   print(data_final)

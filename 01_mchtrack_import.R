@@ -1,7 +1,7 @@
 ########################################################
 #  MCHTrack Data Import, Cleaning & Panel Construction #                           #
 #  Created on 14/5/2026                                #
-#  Last Updated 14/5/2026                              #
+#  Last Updated 27/5/2026                              #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -15,7 +15,7 @@
   #Set link shortcuts
   home    <- "C:/Users/HP/Documents/GitHub/datharm-placement"
   raw_dir <- file.path(home, "02_data/02_mchtrack")
-  out_dir <- file.path(home, "03_output/02_mchtrack_data")
+  out_dir <- file.path(home, "03_output/01_mchtrack_data")
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
   
   #Define analysis window
@@ -210,6 +210,28 @@
       health_center_id, health_center_name,
       lga_id, lga_name, facility_ward,
       hf_distance_km, rimi_flag
+    )
+  
+  # Add further definitions of Zero Dose, already in data_ll_clean as zero_dose == TRUE
+  
+  # Definition 2: truly zero dose — no record of ANY antigen in facility visits
+  children_with_any_vaccine <- data_fv_clean %>%
+    filter(woman_or_child == "child") %>%
+    filter(!is.na(vaccines_administered) & vaccines_administered != "") %>%
+    distinct(patient_id) %>%
+    mutate(has_any_vaccine_record = TRUE)
+  
+  data_ll_children <- data_ll_clean %>%
+    filter(woman_or_child == "child") %>%
+    left_join(children_with_any_vaccine, by = c("pseudo_id" = "patient_id")) %>%
+    mutate(
+      # Definition 1: existing flag
+      zero_dose_penta   = zero_dose,
+      # Definition 2: truly zero dose — no vaccine of any kind in MCHTrack records
+      # caveat: does not capture off-network vaccination
+      zero_dose_truly   = is.na(has_any_vaccine_record),
+      # Definition 4: age-flexible — no penta-1 regardless of age
+      zero_dose_ageflex = (zero_dose_penta | age_months < 12)
     )
   
   #Validate ----
@@ -517,7 +539,69 @@
     distinct(state, lga_name, facility_ward) %>%
     count(state, name = "n_wards") %>%
     print()
+
+  #----------------------------#Dekadal LGA Panel#--------------------------------#
   
+# 13. Build LGA x Dekad panel (supplementary — for dekadal regression) ----
+  
+  # immunization visits per LGA-dekad
+  data_panel_lga_dekad_visits <- data_fv_clean %>%
+    filter(is_immunization, woman_or_child == "child") %>%
+    mutate(
+      year_month = format(visit_date, "%Y-%m"),
+      dekad_num  = case_when(
+        day(visit_date) <= 10 ~ "D1",
+        day(visit_date) <= 20 ~ "D2",
+        TRUE                  ~ "D3"
+      ),
+      dekad_id = paste0(year_month, "-", dekad_num)
+    ) %>%
+    group_by(state, lga_id, lga_name, year_month, dekad_id, dekad_num, rimi_flag) %>%
+    summarise(
+      imm_visits      = n(),
+      unique_patients = n_distinct(patient_id),
+      .groups = "drop"
+    )
+  
+  # expand grid: all LGA × dekad combos
+  all_dekads <- data.frame(
+    dekad_id = c(outer(
+      format(seq(window_start, window_end, by = "month"), "%Y-%m"),
+      c("-D1","-D2","-D3"),
+      paste0
+    ))
+  ) %>%
+    mutate(
+      year_month = str_sub(dekad_id, 1, 7),
+      dekad_num  = str_sub(dekad_id, 9, 10)
+    )
+  
+  data_panel_lga_dekad <- all_lgas %>%
+    cross_join(all_dekads) %>%
+    left_join(data_panel_lga_dekad_visits,
+              by = c("state","lga_id","lga_name","year_month","dekad_id","dekad_num","rimi_flag")) %>%
+    left_join(data_lga_controls, by = c("state","lga_id","lga_name")) %>%
+    mutate(
+      imm_visits      = replace_na(imm_visits, 0L),
+      unique_patients = replace_na(unique_patients, 0L),
+      in_window = case_when(
+        state == "Katsina" & year_month > "2025-09" ~ FALSE,
+        TRUE ~ TRUE
+      )
+    ) %>%
+    filter(in_window) %>%
+    select(-in_window) %>%
+    arrange(state, lga_name, dekad_id)
+  
+  # validate
+  data_panel_lga_dekad %>%
+    summarise(
+      total_rows    = n(),
+      unique_dekads = n_distinct(dekad_id),
+      unique_lgas   = n_distinct(lga_name),
+      zero_cells    = sum(imm_visits == 0)
+    ) %>%
+    print()
   
   
 ##########
@@ -526,11 +610,13 @@
 
   #Save assembled panels as native R object instead of CSV
   saveRDS(data_panel_lga,              
-          file.path(out_dir, "02_panel_lga_month.rds"))
+          file.path(out_dir, "01_panel_lga_month.rds"))
   saveRDS(data_panel_ward,              
-          file.path(out_dir, "02_panel_ward_month_full.rds"))
+          file.path(out_dir, "01_panel_ward_month_full.rds"))
   saveRDS(data_panel_ward_consolidated, 
-          file.path(out_dir, "02_panel_ward_month_consolidated.rds"))
+          file.path(out_dir, "01_panel_ward_month_consolidated.rds"))
+  saveRDS(data_panel_lga_dekad,
+          file.path(out_dir, "01_panel_lga_dekad.rds"))
   
   #Save cleaned and stacked MCHTrack tables
   saveRDS(data_fv_clean, 
@@ -541,6 +627,8 @@
           file.path(out_dir, "01_identifiedzd_clean.rds"))
   saveRDS(data_dt_clean, 
           file.path(out_dir, "01_defaultertracing_clean.rds"))
+  
+
   
 #--------------------------(END)------------------------------#
   
