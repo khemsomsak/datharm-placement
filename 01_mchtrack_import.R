@@ -190,6 +190,9 @@
   #Clean ----
   data_ll_clean <- data_ll_raw %>%
     mutate(
+      age_years  = as.numeric(age_years),
+      age_months = as.numeric(age_months),
+      age_weeks  = as.numeric(age_weeks),
       registration_date = as.Date(registration_date),
       lga_name          = clean_lga_name(lga_name),
       facility_ward     = clean_ward_name(facility_ward),
@@ -209,7 +212,19 @@
       settlement_id, settlement_name,
       health_center_id, health_center_name,
       lga_id, lga_name, facility_ward,
-      hf_distance_km, rimi_flag
+      hf_distance_km, rimi_flag,
+      registration_date, age_months, 
+      age_years, age_weeks
+    ) %>%
+    #Compute derived age and multi-definition ZD flags ----
+    mutate(
+      # age at registration in months
+      age_months_at_reg  = age_years * 12 + age_months + age_weeks / 4.33,
+      # Definition 1: existing MCHTrack flag (penta-zero-dose, 12-23m window)
+      zero_dose_penta    = zero_dose,
+      # Definition 4: age-flexible — no penta-1 regardless of age
+      zero_dose_ageflex  = (zero_dose == TRUE)
+      # Definition 2 (truly zero dose) added in 03_regression.R after vaccine join
     )
   
   # Add further definitions of Zero Dose, already in data_ll_clean as zero_dose == TRUE
@@ -623,6 +638,8 @@
           file.path(out_dir, "01_facility_visits_clean.rds"))
   saveRDS(data_ll_clean, 
           file.path(out_dir, "01_linelisted_clean.rds"))
+  saveRDS(children_with_any_vaccine,
+          file.path(out_dir, "01_any_vaccine_flag.rds"))
   saveRDS(data_zd_clean, 
           file.path(out_dir, "01_identifiedzd_clean.rds"))
   saveRDS(data_dt_clean, 
