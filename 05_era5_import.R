@@ -1,6 +1,6 @@
 ########################################################
-#  ERA5-HEAT UTCI Import & Variability Diagnostic      #
-#  Source: ECMWF CDS monthly stats, 2025               #
+#  ERA5-HEAT UTCI Daily Import & QC Diagnostic         #
+#  Source: ECMWF CDS daily files, Aug 2024 – Apr 2026  #
 #  Sites: Ungogo (peri-urban) & Gabasawa (rural), Kano #
 #  Created: June 2026                                  #
 ########################################################
@@ -12,12 +12,12 @@ setwd("C:/Users/HP/Documents/GitHub/datharm-placement")
 options(scipen = 999)
 Sys.setlocale("LC_TIME", "English")
 
-home    <- "C:/Users/HP/Documents/GitHub/datharm-placement"
-era5_dir <- file.path(home, "02_data/03_external/06_ERA5")
+home     <- "C:/Users/HP/Documents/GitHub/datharm-placement"
+era5_raw <- file.path(home, "02_data/03_external/06_ERA5")
 out_dir  <- file.path(home, "03_output/05_era5")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
-# MCHTrack programme window
+# Full programme window
 window_start <- as.Date("2024-08-01")
 window_end   <- as.Date("2026-04-30")
 
@@ -26,7 +26,6 @@ library(tidyverse)
 library(lubridate)
 library(ggplot2)
 library(patchwork)
-library(janitor)
 
 #----------------------------------------------------------------------------
 
@@ -47,391 +46,442 @@ print(sites)
 #----------------------------------------------------------------------------
 
 ###################################
-# 2. Inspect one file             #
+# 2. Inventory daily files        #
 ###################################
 
-# Run this section first to confirm variable names before extraction.
-# All 12 files share the same internal structure — inspecting one is enough.
+# Separate daily from monthly — daily files have 8-digit date, monthly have 6
+all_files <- list.files(era5_raw, pattern = "\\.nc$", full.names = TRUE)
 
-sample_file <- list.files(era5_dir, pattern = "monthly_stats", full.names = TRUE)[1]
-cat("\nInspecting:", basename(sample_file), "\n")
+daily_files <- all_files[str_detect(basename(all_files),
+                                    "utci_\\d{8}_")] %>% sort()
 
-nc_sample <- nc_open(sample_file)
-cat("\n--- Variables inside file ---\n")
-print(names(nc_sample$var))
-cat("\n--- Dimensions ---\n")
-print(names(nc_sample$dim))
-cat("\nLatitude values:", ncvar_get(nc_sample, "lat"), "\n")
-cat("Longitude values:", ncvar_get(nc_sample, "lon"), "\n")
+monthly_files <- all_files[str_detect(basename(all_files),
+                                      "monthly_stats")] %>% sort()
 
-# Pull one variable to check units and shape
-first_var <- names(nc_sample$var)[1]
-test_pull <- ncvar_get(nc_sample, first_var)
-cat("\nFirst variable:", first_var, "\n")
-cat("Dimensions of array:", dim(test_pull), "\n")
-cat("Sample values (first cell):", test_pull[1,1,], "\n")
-cat("Note: if values are around 295-320, units are Kelvin — subtract 273.15 for Celsius\n")
+cat("\nTotal .nc files found:", length(all_files))
+cat("\nDaily files found:    ", length(daily_files))
+cat("\nMonthly files found:  ", length(monthly_files), "\n")
 
+# Parse dates from daily filenames
+file_dates <- as.Date(
+  str_extract(basename(daily_files), "\\d{8}"), "%Y%m%d"
+)
+
+cat("\nDaily file coverage:\n")
+cat("  First date:", format(min(file_dates), "%d %b %Y"), "\n")
+cat("  Last date: ", format(max(file_dates), "%d %b %Y"), "\n")
+cat("  N files:   ", length(daily_files), "\n")
+
+# Check for missing dates in window
+full_date_seq  <- seq(window_start, window_end, by = "day")
+missing_dates  <- full_date_seq[!full_date_seq %in% file_dates]
+
+cat("\nExpected days in window:", length(full_date_seq))
+cat("\nMissing days:           ", length(missing_dates))
+if (length(missing_dates) > 0 & length(missing_dates) <= 40) {
+  cat("\nMissing date list:", format(missing_dates, "%d %b %Y"), "\n")
+} else if (length(missing_dates) > 40) {
+  cat("\nToo many missing — check CDS pull coverage\n")
+} else {
+  cat(" — complete coverage\n")
+}
+
+#----------------------------------------------------------------------------
+
+###################################
+# 3. Inspect one daily file       #
+###################################
+
+nc_sample <- nc_open(daily_files[1])
+cat("\n--- Sample file inspection ---\n")
+cat("File:", basename(daily_files[1]), "\n")
+cat("Variables:", names(nc_sample$var), "\n")
+cat("Dimensions:", names(nc_sample$dim), "\n")
+cat("Lat values:", ncvar_get(nc_sample, "lat"), "\n")
+cat("Lon values:", ncvar_get(nc_sample, "lon"), "\n")
+
+# Check first variable dimensions — daily files have hourly layers
+first_var  <- names(nc_sample$var)[1]
+test_arr   <- ncvar_get(nc_sample, first_var)
+cat("Array dimensions [lon x lat x hour]:", dim(test_arr), "\n")
+cat("Sample value (first cell, midday hour):", test_arr[1, 1, 12] - 273.15, "°C\n")
 nc_close(nc_sample)
 
 #----------------------------------------------------------------------------
 
 ###################################
-# 3. Loop extraction — all months #
+# 4. Extraction loop — daily      #
 ###################################
 
-# List all monthly stats files
-monthly_files <- list.files(
-  path       = era5_dir,
-  pattern    = "monthly_stats.*\\.nc$",
-  full.names = TRUE
-) %>% sort()
+# For each daily file:
+#   - Extract hourly UTCI at each site's nearest grid cell
+#   - Compute daily max (peak heat burden) and daily mean
+#   - Flag extreme heat day: daily max >= 38°C
 
-cat("\nFound", length(monthly_files), "monthly files:\n")
-cat(paste(basename(monthly_files), collapse = "\n"), "\n")
-
-# Helper: extract UTCI stats at nearest grid cell to each site
-extract_utci_month <- function(filepath, sites) {
+extract_utci_day <- function(filepath, sites) {
   
   nc   <- nc_open(filepath)
   lats <- ncvar_get(nc, "lat")
   lons <- ncvar_get(nc, "lon")
   
-  # Parse year-month from filename e.g. monthly_stats_202503
-  ym_str <- str_extract(basename(filepath), "\\d{6}")
-  year_month <- as.Date(paste0(ym_str, "01"), "%Y%m%d")
+  # Parse date from filename
+  date_str <- str_extract(basename(filepath), "\\d{8}")
+  file_date <- as.Date(date_str, "%Y%m%d")
   
-  # Identify available variable names
+  # Get UTCI variable — first non-time/bounds variable
   var_names <- names(nc$var)
+  utci_var  <- var_names[str_detect(var_names,
+                                    regex("utci", ignore_case = TRUE))][1]
   
-  # Variable names confirmed from nc inspection:
-  # utci_monthly_max, utci_monthly_min (stored in Kelvin)
-  # utci_days_above_38_daily_max  — days/month where daily max UTCI > 38°C (very strong stress)
-  # utci_days_above_32_daily_max  — days/month where daily max UTCI > 32°C (strong stress)
-  # utci_days_above_26_daily_max  — days/month where daily max UTCI > 26°C (moderate stress)
-  # No direct monthly mean — approximated as (max + min) / 2
+  if (is.na(utci_var)) {
+    # Fallback — use first variable
+    utci_var <- var_names[!var_names %in% c("time_bnds", "bnds")][1]
+  }
   
-  cat("Month:", format(year_month, "%b %Y"), "\n")
+  # Array dimensions: [lon x lat x hour] (24 hourly values)
+  arr <- ncvar_get(nc, utci_var)
+  nc_close(nc)
   
-  # Extract each site
   site_rows <- map_dfr(seq_len(nrow(sites)), function(i) {
     
     lat_idx <- which.min(abs(lats - sites$lat[i]))
     lon_idx <- which.min(abs(lons - sites$lon[i]))
     
-    pull_val <- function(vname) {
-      if (!vname %in% var_names) {
-        warning("Variable not found: ", vname)
-        return(NA_real_)
-      }
-      arr <- ncvar_get(nc, vname)
-      if (length(dim(arr)) == 2) {
-        arr[lon_idx, lat_idx]
-      } else {
-        arr[lon_idx, lat_idx, 1]
-      }
+    # Extract hourly series for this grid cell
+    if (length(dim(arr)) == 3) {
+      hourly_k <- arr[lon_idx, lat_idx, ]   # 24 values in Kelvin
+    } else {
+      hourly_k <- arr[lon_idx, lat_idx]      # single value — use as-is
     }
     
-    utci_max_k <- pull_val("utci_monthly_max")
-    utci_min_k <- pull_val("utci_monthly_min")
+    hourly_c <- hourly_k - 273.15
     
     tibble(
-      lga              = sites$lga[i],
-      context          = sites$context[i],
-      year_month       = year_month,
-      utci_max         = utci_max_k - 273.15,
-      utci_min         = utci_min_k - 273.15,
-      utci_mean_approx = ((utci_max_k + utci_min_k) / 2) - 273.15,
-      # Heat stress exposure — days per month above threshold (daily max)
-      days_above_46    = pull_val("utci_days_above_46_daily_max"),  # extreme stress
-      days_above_38    = pull_val("utci_days_above_38_daily_max"),  # very strong stress
-      days_above_32    = pull_val("utci_days_above_32_daily_max"),  # strong stress
-      days_above_26    = pull_val("utci_days_above_26_daily_max"),  # moderate stress
-      # Same thresholds from daily min (overnight heat burden)
-      days_above_26_min = pull_val("utci_days_above_26_daily_min"),
-      lat_used         = lats[lat_idx],
-      lon_used         = lons[lon_idx]
+      lga           = sites$lga[i],
+      context       = sites$context[i],
+      date          = file_date,
+      utci_daily_max  = max(hourly_c,  na.rm = TRUE),
+      utci_daily_min  = min(hourly_c,  na.rm = TRUE),
+      utci_daily_mean = mean(hourly_c, na.rm = TRUE),
+      # Daytime mean: UTC hours 8-17 = local 09:00-18:00 (Kano = UTC+1)
+      utci_daytime_mean = if (length(hourly_c) >= 17)
+        mean(hourly_c[8:17], na.rm = TRUE)
+      else mean(hourly_c, na.rm = TRUE),
+      lat_used      = lats[lat_idx],
+      lon_used      = lons[lon_idx],
+      n_hours       = length(hourly_c)
     )
   })
   
-  nc_close(nc)
   site_rows
 }
 
-# Run extraction loop across all 12 files
-cat("\n--- Extracting UTCI values ---\n")
+# Filter to programme window only
+daily_files_window <- daily_files[
+  file_dates >= window_start & file_dates <= window_end
+]
 
-utci_monthly <- map_dfr(monthly_files, ~ extract_utci_month(.x, sites))
+cat("\nExtracting", length(daily_files_window),
+    "daily files across programme window...\n")
 
-cat("\n--- Extraction complete ---\n")
-glimpse(utci_monthly)
+# Run loop with progress counter
+utci_daily <- map_dfr(
+  seq_along(daily_files_window),
+  function(i) {
+    if (i %% 50 == 0) cat("  Processed", i, "of",
+                          length(daily_files_window), "files\n")
+    extract_utci_day(daily_files_window[i], sites)
+  }
+)
 
-#----------------------------------------------------------------------------
-
-###################################
-# 4. Enrich and label             #
-###################################
-
-utci_monthly <- utci_monthly %>%
-  mutate(
-    year       = year(year_month),
-    month_num  = month(year_month),
-    month_lab  = month(year_month, label = TRUE, abbr = TRUE),
-    hot_season = month_num %in% c(3, 4, 5),
-    # UTCI stress category based on monthly max (most policy-relevant)
-    stress_cat_max = case_when(
-      utci_max < 9  ~ "No stress",
-      utci_max < 26 ~ "Slight",
-      utci_max < 32 ~ "Moderate",
-      utci_max < 38 ~ "Strong",
-      utci_max < 46 ~ "Very strong",
-      TRUE          ~ "Extreme"
-    ) %>% factor(levels = c("No stress","Slight","Moderate","Strong","Very strong","Extreme"))
-  )
+cat("Extraction complete. Rows:", nrow(utci_daily), "\n\n")
 
 #----------------------------------------------------------------------------
 
 ###################################
-# 5. Variability diagnostic       #
+# 5. Enrich daily series          #
 ###################################
 
-cat("\n=== VARIABILITY DIAGNOSTIC ===\n")
-cat("Key question: is there sufficient monthly variation to detect an effect?\n\n")
-
-var_summary <- utci_monthly %>%
-  group_by(lga, context) %>%
-  summarise(
-    n_months      = n(),
-    mean_utci     = round(mean(utci_mean_approx, na.rm = TRUE), 2),
-    sd_utci       = round(sd(utci_mean_approx, na.rm = TRUE),   2),
-    min_utci      = round(min(utci_mean_approx, na.rm = TRUE),  2),
-    max_utci      = round(max(utci_mean_approx, na.rm = TRUE),  2),
-    range_utci    = round(max_utci - min_utci, 2),
-    n_hot_months  = sum(hot_season, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
+utci_daily <- utci_daily %>%
+  arrange(lga, date) %>%
   mutate(
-    verdict = case_when(
-      sd_utci >= 5 ~ "Strong variation — proceed to regression",
-      sd_utci >= 3 ~ "Moderate variation — likely usable",
-      sd_utci >= 2 ~ "Marginal variation — interpret with caution",
-      TRUE         ~ "Near-zero variation — likely null (same issue as CHIRPS)"
-    )
+    year       = year(date),
+    month_num  = month(date),
+    month_lab  = month(date, label = TRUE, abbr = TRUE),
+    year_month = floor_date(date, "month"),
+    dow        = wday(date, label = TRUE, abbr = TRUE),
+    dow_num    = wday(date),
+    weekend    = as.integer(dow_num %in% c(1, 7)),
+    hot_season = as.integer(month_num %in% c(3, 4, 5, 6)),
+    # Primary exposure: binary extreme heat day
+    extreme_heat_38 = as.integer(utci_daily_max >= 38),
+    extreme_heat_32 = as.integer(utci_daily_max >= 32),
+    extreme_heat_46 = as.integer(utci_daily_max >= 46),
+    # Flag for QC
+    implausible = as.integer(utci_daily_max > 60 | utci_daily_min < -10)
   )
 
-cat("--- Summary by LGA ---\n")
-print(var_summary)
+cat("Enriched series glimpse:\n")
+glimpse(utci_daily)
 
-# Variability diagnostic on heat stress day counts
-utci_verdict <- utci_monthly %>%
+#----------------------------------------------------------------------------
+
+###################################
+# 6. Quality control checks       #
+###################################
+
+cat("\n=== QUALITY CONTROL ===\n\n")
+
+# 6a. Missing dates
+cat("--- Coverage check ---\n")
+for (s in unique(utci_daily$lga)) {
+  site_dates <- utci_daily %>% filter(lga == s) %>% pull(date)
+  n_missing  <- sum(!full_date_seq %in% site_dates)
+  cat(s, ": ", length(site_dates), "days extracted,",
+      n_missing, "missing from window\n")
+}
+
+# 6b. Implausible values
+cat("\n--- Implausible value check (UTCI max >60°C or min <-10°C) ---\n")
+n_implausible <- sum(utci_daily$implausible, na.rm = TRUE)
+cat("Implausible rows:", n_implausible, "\n")
+if (n_implausible > 0) {
+  cat("Flagged rows:\n")
+  utci_daily %>% filter(implausible == 1) %>%
+    select(lga, date, utci_daily_max, utci_daily_min) %>%
+    print()
+}
+
+# 6c. Duplicate dates
+cat("\n--- Duplicate date check ---\n")
+dupes <- utci_daily %>%
+  group_by(lga, date) %>%
+  filter(n() > 1) %>%
+  nrow()
+cat("Duplicate LGA-date rows:", dupes, "\n")
+
+# 6d. N hours per file
+cat("\n--- Hours per file check ---\n")
+utci_daily %>%
+  count(n_hours) %>%
+  print()
+
+# 6e. Summary by LGA
+cat("\n--- Summary statistics by LGA ---\n")
+utci_daily %>%
   group_by(lga, context) %>%
   summarise(
-    mean_days_38 = round(mean(days_above_38), 1),
-    sd_days_38   = round(sd(days_above_38), 1),
-    min_days_38  = min(days_above_38),
-    max_days_38  = max(days_above_38),
-    range_days_38 = max(days_above_38) - min(days_above_38),
-    mean_days_32 = round(mean(days_above_32), 1),
-    sd_days_32   = round(sd(days_above_32), 1),
-    range_days_32 = max(days_above_32) - min(days_above_32),
+    n_days          = n(),
+    mean_daily_max  = round(mean(utci_daily_max, na.rm = TRUE), 1),
+    sd_daily_max    = round(sd(utci_daily_max, na.rm = TRUE), 1),
+    min_daily_max   = round(min(utci_daily_max, na.rm = TRUE), 1),
+    max_daily_max   = round(max(utci_daily_max, na.rm = TRUE), 1),
+    pct_above_38    = round(mean(extreme_heat_38) * 100, 1),
+    pct_above_32    = round(mean(extreme_heat_32) * 100, 1),
+    pct_above_46    = round(mean(extreme_heat_46) * 100, 1),
     .groups = "drop"
   ) %>%
   mutate(
     verdict = case_when(
-      sd_days_38 >= 10 ~ "Strong variation — proceed to regression",
-      sd_days_38 >= 7  ~ "Moderate variation — likely usable",
-      sd_days_38 >= 4  ~ "Marginal — interpret with caution",
-      TRUE             ~ "Near-zero variation — likely null"
+      sd_daily_max >= 5 & pct_above_38 < 95 & pct_above_38 > 5 ~
+        "Strong variation — proceed to regression",
+      sd_daily_max >= 3 ~
+        "Moderate variation — usable",
+      TRUE ~
+        "Near-zero variation — likely null"
     )
   ) %>%
   print()
 
-# Cross-LGA gap — is peri-urban warmer? (urban heat island check)
-lga_gap <- utci_monthly %>%
-  select(year_month, lga, utci_mean_approx) %>%
-  pivot_wider(names_from = lga, values_from = utci_mean_approx) %>%
-  mutate(gap_ung_minus_gab = round(Ungogo - Gabasawa, 2))  # utci_mean_approx units)
-         
-         cat("\n--- Urban heat island check: Ungogo minus Gabasawa (°C UTCI) ---\n")
-         cat("Mean gap:", round(mean(lga_gap$gap_ung_minus_gab, na.rm = TRUE), 2), "°C\n")
-         cat("Max gap:", round(max(lga_gap$gap_ung_minus_gab, na.rm = TRUE), 2), "°C\n")
-         cat("Min gap:", round(min(lga_gap$gap_ung_minus_gab, na.rm = TRUE), 2), "°C\n")
-         cat("Positive = Ungogo warmer as expected if UHI present\n")
-         
-         # Hot season summary
-         hot_summary <- utci_monthly %>%
-           group_by(hot_season) %>%
-           summarise(
-             mean_utci = round(mean(utci_mean_approx, na.rm = TRUE), 2),
-             n         = n(),
-             .groups   = "drop"
-           ) %>%
-           mutate(season = if_else(hot_season, "Hot season (Mar-May)", "Other months"))
-         
-         cat("\n--- Hot season vs other months ---\n")
-         print(hot_summary %>% select(season, mean_utci, n))
-         
-         #----------------------------------------------------------------------------
-         
-         ###################################
-         # 6. Visualisations               #
-         ###################################
-         
-         pal <- c("Peri-urban (Ungogo)" = "#D84A38", "Rural (Gabasawa)" = "#1D6FA4")
-         
-         # -- Plot 1: Time series of monthly mean UTCI -------------------------
-         
-         p1 <- ggplot(utci_monthly, aes(x = year_month, y = utci_mean_approx,
-                                        colour = context, group = context)) +
-           annotate("rect",
-                    xmin = as.Date("2025-03-01"), xmax = as.Date("2025-06-01"),
-                    ymin = -Inf, ymax = Inf,
-                    fill = "#BA7517", alpha = 0.10) +
-           geom_line(linewidth = 1) +
-           geom_point(size = 3) +
-           annotate("text", x = as.Date("2025-04-15"), y = max(utci_monthly$utci_mean_approx, na.rm = TRUE) + 0.8,
-                    label = "Hot season", size = 3.2, colour = "#BA7517") +
-           scale_colour_manual(values = pal) +
-           scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
-           labs(
-             title    = "Monthly mean UTCI — Ungogo vs Gabasawa, 2025",
-             subtitle = "ERA5-HEAT consolidated stream · Point extraction at LGA administrative centres",
-             x        = NULL, y = "UTCI approx mean (°C)", colour = NULL,
-             caption  = "Shaded band = Sahelian hot season (Mar–May) · Mean = (monthly max + min) / 2"
-           ) +
-           theme_minimal(base_size = 12) +
-           theme(legend.position = "top",
-                 plot.title      = element_text(face = "bold"),
-                 axis.text.x     = element_text(angle = 45, hjust = 1))
-         
-         # -- Plot 2: Max–mean–min range bars per month -----------------------
-         
-         p2 <- ggplot(utci_monthly %>% filter(lga == "Ungogo"),
-                      aes(x = month_lab)) +
-           geom_errorbar(aes(ymin = utci_min, ymax = utci_max),
-                         width = 0.3, colour = "#888780", linewidth = 0.8) +
-           geom_point(aes(y = utci_mean_approx), size = 4, colour = "#D84A38") +
-           geom_hline(yintercept = 32, linetype = "dashed",
-                      colour = "#BA7517", linewidth = 0.7) +
-           annotate("text", x = 1, y = 33, hjust = 0,
-                    label = "Strong heat stress threshold (32°C)", size = 3,
-                    colour = "#BA7517") +
-           labs(
-             title    = "UTCI range by month — Ungogo",
-             subtitle = "Bars = min/max, dots = monthly mean approx",
-             x        = NULL, y = "UTCI (°C equivalent)",
-             caption  = "Horizontal dashed line = strong heat stress threshold"
-           ) +
-           theme_minimal(base_size = 12) +
-           theme(plot.title = element_text(face = "bold"))
-         
-         # -- Plot 3: Distribution of monthly UTCI — variation diagnostic -----
-         
-         p3 <- ggplot(utci_monthly, aes(x = utci_mean_approx, fill = context)) +
-           geom_density(alpha = 0.45, colour = NA) +
-           geom_vline(data = var_summary,
-                      aes(xintercept = mean_utci, colour = context),
-                      linetype = "dashed", linewidth = 0.8) +
-           scale_fill_manual(values  = pal) +
-           scale_colour_manual(values = pal) +
-           labs(
-             title    = "Distribution of monthly mean UTCI",
-             subtitle = "Width of distribution = available variation for regression",
-             x        = "UTCI (°C equivalent)", y = "Density",
-             fill     = NULL, colour = NULL,
-             caption  = "Dashed lines = LGA annual mean · Wide = sufficient variation"
-           ) +
-           theme_minimal(base_size = 12) +
-           theme(legend.position = "top",
-                 plot.title      = element_text(face = "bold"))
-         
-         # -- Plot 4: Ungogo minus Gabasawa gap (heat island) -----------------
-         
-         p4 <- ggplot(lga_gap, aes(x = year_month, y = gap_ung_minus_gab)) +
-           geom_col(fill = "#7F77DD", alpha = 0.75, width = 20) +
-           geom_hline(yintercept = 0, linewidth = 0.7) +
-           scale_x_date(date_breaks = "1 month", date_labels = "%b") +
-           labs(
-             title    = "Ungogo minus Gabasawa UTCI gap",
-             subtitle = "Positive = peri-urban warmer (urban heat island)",
-             x        = NULL, y = "°C UTCI difference",
-             caption  = "ERA5 at 0.25° resolution — may understate true UHI"
-           ) +
-           theme_minimal(base_size = 12) +
-           theme(plot.title  = element_text(face = "bold"))
-         
-         # -- Plot 5: Heat stress days per month (key exposure variable) ------
-         
-         p5 <- ggplot(utci_monthly, aes(x = month_lab)) +
-           geom_col(aes(y = days_above_38, fill = context),
-                    position = "dodge", alpha = 0.85) +
-           geom_col(aes(y = days_above_32, fill = context),
-                    position = "dodge", alpha = 0.35, colour = NA) +
-           scale_fill_manual(values = pal) +
-           facet_wrap(~ context, ncol = 2) +
-           labs(
-             title    = "Days per month above heat stress thresholds",
-             subtitle = "Dark = days above 38°C UTCI (very strong) · Light = days above 32°C (strong)",
-             x        = NULL, y = "Days per month", fill = NULL,
-             caption  = "Key exposure variable for regression — counts caregiver heat burden days"
-           ) +
-           theme_minimal(base_size = 12) +
-           theme(legend.position = "none",
-                 plot.title      = element_text(face = "bold"),
-                 strip.text      = element_text(face = "bold"))
-         
-         # -- Combine ---------------------------------------------------------
-         
-         combined <- (p1 + p2) / (p3 + p4) / (p5 + plot_spacer()) +
-           plot_annotation(
-             title    = "ERA5-HEAT UTCI — variability diagnostic · Kano, 2025",
-             subtitle = "Ungogo (peri-urban) vs Gabasawa (rural)",
-             theme    = theme(
-               plot.title    = element_text(face = "bold", size = 14),
-               plot.subtitle = element_text(size = 11)
-             )
-           )
-         
-         ggsave(
-           filename = file.path(out_dir, "05_era5_utci_diagnostic.png"),
-           plot     = combined,
-           width    = 14, height = 14, dpi = 300
-         )
-         
-         cat("\nDiagnostic plot saved to:", file.path(out_dir, "05_era5_utci_diagnostic.png"), "\n")
-         
-         #----------------------------------------------------------------------------
-         
-         ###################################
-         # 7. Save extracted series        #
-         ###################################
-         
-         write_csv(
-           utci_monthly,
-           file.path(out_dir, "05_era5_utci_monthly_2025.csv")
-         )
-         
-         saveRDS(
-           utci_monthly,
-           file.path(out_dir, "05_era5_utci_monthly_2025.rds")
-         )
-         
-         cat("Extracted series saved to CSV and RDS.\n")
-         
-         #----------------------------------------------------------------------------
-         
-         ###################################
-         # 8. Decision log                 #
-         ###################################
-         
-         cat("\n=== DECISION LOG ===\n")
-         cat("If sd_utci >= 3 AND range_utci >= 8: sufficient — proceed to:\n")
-         cat("  (a) Submit second CDS pull for Aug-Dec 2024 + Jan-Apr 2026 monthly stats\n")
-         cat("  (b) Write 06_temperature_regression.R merging UTCI onto MCHTrack panel\n\n")
-         cat("If sd_utci < 2: near-zero variation — same structural issue as CHIRPS\n")
-         cat("  Document as second independent null finding — strengthens limitation argument\n\n")
-         cat("If UHI gap is consistently < 0.5°C: ERA5 cannot distinguish Ungogo/Gabasawa\n")
-         cat("  Treat both as a single Kano UTCI series in any regression\n")
-         cat("===================\n")
-         
-         cat("\n--- Script complete ---\n")
+#----------------------------------------------------------------------------
+
+###################################
+# 7. Variability diagnostics      #
+###################################
+
+pal <- c("Peri-urban (Ungogo)" = "#D84A38",
+         "Rural (Gabasawa)"    = "#1D6FA4")
+
+# -- Plot 1: Daily max UTCI time series --------------------------------
+
+p1 <- ggplot(utci_daily, aes(x = date, y = utci_daily_max,
+                             colour = context)) +
+  annotate("rect",
+           xmin = as.Date("2024-03-01"), xmax = as.Date("2024-07-01"),
+           ymin = -Inf, ymax = Inf, fill = "#BA7517", alpha = 0.07) +
+  annotate("rect",
+           xmin = as.Date("2025-03-01"), xmax = as.Date("2025-07-01"),
+           ymin = -Inf, ymax = Inf, fill = "#BA7517", alpha = 0.07) +
+  annotate("rect",
+           xmin = as.Date("2026-03-01"), xmax = as.Date("2026-07-01"),
+           ymin = -Inf, ymax = Inf, fill = "#BA7517", alpha = 0.07) +
+  geom_line(alpha = 0.6, linewidth = 0.4) +
+  geom_smooth(method = "loess", span = 0.1,
+              se = FALSE, linewidth = 1.1) +
+  geom_hline(yintercept = 38, linetype = "dashed",
+             colour = "#BA7517", linewidth = 0.7) +
+  geom_hline(yintercept = 46, linetype = "dotted",
+             colour = "#D84A38", linewidth = 0.7) +
+  scale_colour_manual(values = pal) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b %Y") +
+  labs(
+    title    = "Daily maximum UTCI across programme window",
+    subtitle = "ERA5-HEAT · Aug 2024 – Apr 2026 · Shaded = hot season (Mar–Jun)",
+    x        = NULL, y = "Daily max UTCI (°C)", colour = NULL,
+    caption  = "Dashed = 38°C threshold (very strong stress) · Dotted = 46°C (extreme)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top",
+        plot.title      = element_text(face = "bold"),
+        axis.text.x     = element_text(angle = 30, hjust = 1))
+
+# -- Plot 2: Distribution of daily max — variation diagnostic ----------
+
+p2 <- ggplot(utci_daily, aes(x = utci_daily_max, fill = context)) +
+  geom_histogram(bins = 40, alpha = 0.6, position = "identity",
+                 colour = NA) +
+  geom_vline(xintercept = 38, linetype = "dashed",
+             colour = "#BA7517", linewidth = 0.8) +
+  geom_vline(xintercept = 32, linetype = "dotted",
+             colour = "#888780", linewidth = 0.8) +
+  scale_fill_manual(values = pal) +
+  labs(
+    title    = "Distribution of daily max UTCI",
+    subtitle = "Key diagnostic: bimodal or wide = good variation for regression",
+    x        = "Daily max UTCI (°C)", y = "Days",
+    fill     = NULL,
+    caption  = "Dashed = 38°C · Dotted = 32°C"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top",
+        plot.title      = element_text(face = "bold"))
+
+# -- Plot 3: Monthly extreme heat day counts ---------------------------
+
+monthly_counts <- utci_daily %>%
+  group_by(lga, context, year_month) %>%
+  summarise(
+    days_above_38 = sum(extreme_heat_38, na.rm = TRUE),
+    days_above_32 = sum(extreme_heat_32, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p3 <- ggplot(monthly_counts, aes(x = year_month, y = days_above_38,
+                                 fill = context)) +
+  geom_col(position = "dodge", alpha = 0.8, width = 20) +
+  scale_fill_manual(values = pal) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b %Y") +
+  labs(
+    title    = "Days per month above 38°C UTCI",
+    subtitle = "Constructed from daily extraction — consistency check vs monthly stats files",
+    x        = NULL, y = "Days per month", fill = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top",
+        plot.title      = element_text(face = "bold"),
+        axis.text.x     = element_text(angle = 30, hjust = 1))
+
+# -- Plot 4: Consistency check vs monthly stats ------------------------
+# Recompute monthly max from daily and compare to utci_monthly_max
+
+monthly_from_daily <- utci_daily %>%
+  group_by(lga, year_month) %>%
+  summarise(
+    max_from_daily = max(utci_daily_max, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+monthly_stats_2025 <- readRDS(
+  file.path(out_dir, "05_era5_utci_monthly_2025.rds")
+) %>%
+  select(lga, year_month, utci_max_monthly = utci_max) %>%
+  filter(year_month >= as.Date("2025-01-01"),
+         year_month <= as.Date("2025-12-01"))
+
+consistency_check <- monthly_from_daily %>%
+  filter(year(year_month) == 2025) %>%
+  left_join(monthly_stats_2025, by = c("lga", "year_month")) %>%
+  mutate(diff = round(max_from_daily - utci_max_monthly, 2))
+
+cat("\n--- Consistency check: daily-derived max vs monthly stats max (2025) ---\n")
+print(consistency_check)
+cat("Mean absolute difference:", round(mean(abs(consistency_check$diff),
+                                            na.rm = TRUE), 2), "°C\n")
+cat("If < 1°C: daily and monthly files are consistent\n\n")
+
+p4 <- ggplot(consistency_check, aes(x = utci_max_monthly,
+                                    y = max_from_daily,
+                                    colour = lga)) +
+  geom_point(size = 3.5) +
+  geom_abline(slope = 1, intercept = 0,
+              linetype = "dashed", colour = "#888780") +
+  scale_colour_manual(values = c("Ungogo" = "#D84A38",
+                                 "Gabasawa" = "#1D6FA4")) +
+  labs(
+    title    = "Consistency: daily-derived max vs monthly stats max",
+    subtitle = "Points should lie on 45° line if consistent",
+    x        = "Monthly stats file: utci_max (°C)",
+    y        = "Daily files: max of daily maxima (°C)",
+    colour   = NULL,
+    caption  = "2025 data only — both sources available for cross-check"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top",
+        plot.title      = element_text(face = "bold"))
+
+# -- Combine -----------------------------------------------------------
+
+combined <- (p1 + p2) / (p3 + p4) +
+  plot_annotation(
+    title    = "ERA5-HEAT UTCI — daily extraction QC · Aug 2024 – Apr 2026",
+    subtitle = "Ungogo (peri-urban) vs Gabasawa (rural) · Kano",
+    theme    = theme(
+      plot.title    = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(size = 11)
+    )
+  )
+
+ggsave(
+  filename = file.path(out_dir, "05_era5_daily_qc.png"),
+  plot     = combined,
+  width    = 14, height = 10, dpi = 300
+)
+
+cat("QC plots saved to:", file.path(out_dir, "05_era5_daily_qc.png"), "\n")
+
+#----------------------------------------------------------------------------
+
+###################################
+# 8. Save daily series            #
+###################################
+
+saveRDS(utci_daily,
+        file.path(out_dir, "05_era5_utci_daily.rds"))
+
+write_csv(utci_daily,
+          file.path(out_dir, "05_era5_utci_daily.csv"))
+
+cat("Daily series saved.\n")
+cat("Rows:", nrow(utci_daily), "\n")
+cat("Date range:", format(min(utci_daily$date), "%d %b %Y"),
+    "to", format(max(utci_daily$date), "%d %b %Y"), "\n")
+
+#----------------------------------------------------------------------------
+
+###################################
+# 9. Decision log                 #
+###################################
+
+cat("\n=== DECISION LOG ===\n")
+cat("Check the QC summary above:\n\n")
+cat("PROCEED to 06_era5_analysis_daily.R if:\n")
+cat("  - sd_daily_max >= 4\n")
+cat("  - pct_above_38 between 10% and 90% (not near-ceiling or floor)\n")
+cat("  - Consistency check shows mean diff < 1°C\n")
+cat("  - No large gaps in coverage (< 10 missing days)\n\n")
+cat("STOP if:\n")
+cat("  - pct_above_38 > 90% — near-ceiling, no variation to exploit\n")
+cat("  - Many implausible values — data quality issue\n")
+cat("  - Large gaps in coverage — check CDS pull\n")
+cat("===================\n")
+cat("\n--- Script complete ---\n")
