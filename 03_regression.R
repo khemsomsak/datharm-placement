@@ -174,7 +174,112 @@ modelsummary(
   stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01)
 )
 
-# 9. Ward-level residuals from Model A1 ---------------------------------------
+# 9. Independent penta-ZD flag construction -----------------------------------
+# builds ZD flag directly from facility visits — same source as truly-ZD
+# allows valid like-for-like comparison between definitions
+# separate from MCHTrack operational flag which cannot be inspected
+
+#Children with a Penta_1 record in MCHTrack facility visits ----
+data_penta1_received <- data_fv_clean %>%
+  filter(woman_or_child == "child") %>%
+  filter(str_detect(vaccines_administered, "Penta_1")) %>%
+  distinct(patient_id) %>%
+  mutate(has_penta1_record = TRUE)
+
+#Join onto model A dataset and construct independent flags ----
+data_model_a <- data_model_a %>%
+  left_join(data_penta1_received,
+            by = c("pseudo_id" = "patient_id")) %>%
+  mutate(
+    
+    # Independent penta-ZD: no Penta_1 record in MCHTrack facility visits
+    # same source and missing data structure as zero_dose_truly
+    # age window applied to match standard 12-23m definition
+    zero_dose_independent = as.integer(
+      is.na(has_penta1_record) &
+        age_months_at_reg >= 12 &
+        age_months_at_reg < 24
+    ),
+    
+    # Independent truly-ZD: already constructed but rename for clarity
+    # no vaccine of any kind in MCHTrack facility visits
+    zero_dose_truly_fv = zero_dose_truly,
+    
+    # MCHTrack flag agreement check: does independent flag match programme flag?
+    # TRUE = agreement, FALSE = discrepancy worth investigating
+    flag_agrees = (zero_dose_independent == zero_dose_penta)
+    
+  )
+
+#Agreement check summary ----
+data_model_a %>%
+  filter(in_primary_sample, age_months_at_reg >= 12, age_months_at_reg < 24) %>%
+  group_by(state) %>%
+  summarise(
+    n_in_window       = n(),
+    n_agree           = sum(flag_agrees,          na.rm = TRUE),
+    pct_agree         = round(mean(flag_agrees,   na.rm = TRUE) * 100, 1),
+    independent_zd_n  = sum(zero_dose_independent, na.rm = TRUE),
+    mchtrack_zd_n     = sum(zero_dose_penta,       na.rm = TRUE),
+    discrepancy_n     = abs(independent_zd_n - mchtrack_zd_n)
+  ) %>%
+  print()
+
+# 10. Zero-dose definition comparison table -----------------------------------
+# now valid like-for-like: independent penta-ZD and truly-ZD drawn from
+# same source (facility visits); MCHTrack flag shown as reference only
+
+#Restrict to 12-23m window for all definitions to ensure comparability ----
+data_model_a %>%
+  filter(in_primary_sample, age_months_at_reg >= 12, age_months_at_reg < 24) %>%
+  group_by(state, lga_name) %>%
+  summarise(
+    n_children            = n(),
+    # MCHTrack operational flag — reference only, different source
+    zd_mchtrack_pct       = round(mean(zero_dose_penta,       na.rm = TRUE) * 100, 1),
+    # Independent penta-ZD — constructed from facility visits
+    zd_independent_pct    = round(mean(zero_dose_independent, na.rm = TRUE) * 100, 1),
+    # Truly-ZD — no vaccine at all, same source as independent
+    zd_truly_pct          = round(mean(zero_dose_truly_fv,    na.rm = TRUE) * 100, 1),
+    # Gap: truly-ZD minus independent penta-ZD
+    # positive = children with no vaccines at all beyond those missing penta-1
+    gap_truly_vs_penta    = round(
+      mean(zero_dose_truly_fv,    na.rm = TRUE) * 100 -
+        mean(zero_dose_independent, na.rm = TRUE) * 100, 1),
+    .groups = "drop"
+  ) %>%
+  arrange(state, lga_name) %>%
+  print(n = Inf)
+
+#Overall totals ----
+data_model_a %>%
+  filter(in_primary_sample, age_months_at_reg >= 12, age_months_at_reg < 24) %>%
+  summarise(
+    n_children          = n(),
+    zd_mchtrack_pct     = round(mean(zero_dose_penta,       na.rm = TRUE) * 100, 1),
+    zd_independent_pct  = round(mean(zero_dose_independent, na.rm = TRUE) * 100, 1),
+    zd_truly_pct        = round(mean(zero_dose_truly_fv,    na.rm = TRUE) * 100, 1)
+  ) %>%
+  print()
+
+#Save CSV ----
+data_model_a %>%
+  filter(in_primary_sample, age_months_at_reg >= 12, age_months_at_reg < 24) %>%
+  group_by(state, lga_name) %>%
+  summarise(
+    n_children            = n(),
+    zd_mchtrack_pct       = round(mean(zero_dose_penta,       na.rm = TRUE) * 100, 1),
+    zd_independent_pct    = round(mean(zero_dose_independent, na.rm = TRUE) * 100, 1),
+    zd_truly_pct          = round(mean(zero_dose_truly_fv,    na.rm = TRUE) * 100, 1),
+    gap_truly_vs_penta    = round(
+      mean(zero_dose_truly_fv,    na.rm = TRUE) * 100 -
+        mean(zero_dose_independent, na.rm = TRUE) * 100, 1),
+    .groups = "drop"
+  ) %>%
+  arrange(state, lga_name) %>%
+  write_csv(file.path(out_dir, "00_zd_definition_comparison.csv"))
+
+# 10. Ward-level residuals from Model A1 ---------------------------------------
 # wards with large positive residuals = higher ZD than predictors explain
 # operationally useful as a targeting output for programme team
 
@@ -201,7 +306,7 @@ cat("\n")
 
 #----------------------------#Model B: Tracing Effectiveness#---------------#
 
-# 10. Build child-level analysis dataset for Model B --------------------------
+# 11. Build child-level analysis dataset for Model B --------------------------
 
   #Build lag time: days between last facility visit and tracing contact ----
   # join most recent pre-tracing visit date per patient from facility visits
@@ -288,7 +393,7 @@ data_model_b %>%
   print()
 cat("\n")
 
-# 11. Model B1: strict outcome, LGA fixed effects — primary spec ---------------
+# 12. Model B1: strict outcome, LGA fixed effects — primary spec ---------------
 
 m_b1 <- feglm(
   recovered_strict ~ method_sms + hf_distance_km + age_months_tracing +
@@ -299,7 +404,7 @@ m_b1 <- feglm(
   vcov   = ~lga_name
 )
 
-# 12. Model B2: robustness — permissive outcome --------------------------------
+# 13. Model B2: robustness — permissive outcome --------------------------------
 
 m_b2 <- feglm(
   recovered_permissive ~ method_sms + hf_distance_km + age_months_tracing +
@@ -310,7 +415,7 @@ m_b2 <- feglm(
   vcov   = ~lga_name
 )
 
-# 13. Model B3: robustness — child reached outcome -----------------------------
+# 14. Model B3: robustness — child reached outcome -----------------------------
 
 m_b3 <- feglm(
   child_reached ~ method_sms + hf_distance_km + age_months_tracing +
@@ -321,7 +426,7 @@ m_b3 <- feglm(
   vcov   = ~lga_name
 )
 
-# 14. Model B4: robustness — state interaction on tracing method ---------------
+# 15. Model B4: robustness — state interaction on tracing method ---------------
 # tests whether SMS advantage differs between Kano and Katsina
 
 m_b4 <- feglm(
@@ -333,7 +438,7 @@ m_b4 <- feglm(
   vcov   = ~lga_name
 )
 
-# 15. Regression table: Model B -----------------------------------------------
+# 16. Regression table: Model B -----------------------------------------------
 
 modelsummary(
   list("Strict"         = m_b1,
