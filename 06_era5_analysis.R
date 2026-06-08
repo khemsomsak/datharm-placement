@@ -87,36 +87,6 @@ visit_daily <- date_spine %>%
 cat("Daily outcome panel rows:", nrow(visit_daily), "\n")
 cat("Zero-visit days:", sum(visit_daily$n_visits == 0), "\n\n")
 
-# Zero visit day diagnostic — base R only, no pipe conflicts
-
-# 1. Day of week breakdown
-dow_tab <- table(
-  weekdays(visit_daily$visit_date[visit_daily$n_visits == 0])
-)
-cat("--- Zero-visit days by day of week ---\n")
-print(sort(dow_tab, decreasing = TRUE))
-
-# 2. Zero rate by month
-cat("\n--- Zero-visit days by month ---\n")
-visit_daily$ym <- format(visit_daily$visit_date, "%Y-%m")
-month_tab <- aggregate(n_visits ~ ym + lga_clean, data = visit_daily,
-                       FUN = function(x) sum(x == 0))
-names(month_tab)[3] <- "zero_days"
-month_tab$total_days <- aggregate(n_visits ~ ym + lga_clean,
-                                  data = visit_daily,
-                                  FUN = length)$n_visits
-month_tab$pct_zero <- round(month_tab$zero_days / month_tab$total_days * 100, 1)
-print(month_tab[order(month_tab$lga_clean, month_tab$ym), ],
-      row.names = FALSE)
-
-# 3. Overall zero rate by LGA
-cat("\n--- Zero rate by LGA ---\n")
-lga_tab <- aggregate(n_visits ~ lga_clean, data = visit_daily,
-                     FUN = function(x) c(zeros = sum(x == 0),
-                                         total = length(x),
-                                         pct   = round(sum(x == 0)/length(x)*100, 1)))
-print(lga_tab)
-
 #----------------------------------------------------------------------------
 
 ###################################
@@ -227,39 +197,9 @@ d5 <- feols(log_visits ~ extreme_heat_38 + heat_lag1 + heat_lag2 + heat_lag3 |
             data    = panel %>% filter(!is.na(heat_lag3)),
             cluster = ~lga_clean)
 
-# D6: Poisson — more appropriate for count outcome with many zeros
-d6 <- feglm(n_visits ~ extreme_heat_38 | lga_clean + dow_num + ym_factor,
-            data   = panel,
-            family = poisson(),
-            cluster = ~lga_clean)
-
-# D3 with robust SE instead of clustered
-d3_robust <- feols(log_visits ~ extreme_heat_38 | 
-                     lga_clean + dow_num + ym_factor,
-                   data = panel,
-                   vcov = "hetero")
-
-d6_robust <- feglm(n_visits ~ extreme_heat_38 | 
-                     lga_clean + dow_num + ym_factor,
-                   data   = panel,
-                   family = poisson(),
-                   vcov   = "hetero")
-
-etable(d3, d3_robust, d6, d6_robust, digits = 3, se.below = TRUE)
-
-d3_ungogo   <- feols(log_visits ~ extreme_heat_38 | dow_num + ym_factor,
-                     data  = panel %>% filter(lga_clean == "Ungogo"),
-                     vcov  = "hetero")
-
-d3_gabasawa <- feols(log_visits ~ extreme_heat_38 | dow_num + ym_factor,
-                     data  = panel %>% filter(lga_clean == "Gabasawa"),
-                     vcov  = "hetero")
-
-etable(d3_ungogo, d3_gabasawa, digits = 3, se.below = TRUE)
-
 cat("=== REGRESSION RESULTS ===\n\n")
 
-etable(d1, d2, d3, d4, d5, d6, d3_robust, d6_robust,
+etable(d1, d2, d3, d4, d5,
        title    = "UTCI heat stress and facility visits — daily panel · Kano",
        digits   = 3,
        se.below = TRUE)
@@ -269,11 +209,8 @@ modelsummary(
     "D1: LGA FE"          = d1,
     "D2: +DOW FE"         = d2,
     "D3: +Month-year FE"  = d3,
-    "D3 Robust"           = d3_robust,
     "D4: Continuous UTCI" = d4,
-    "D5: Distributed lag" = d5,
-    "D6: Poisson"         = d6,
-    "D6 Robust"           = d6_robust  
+    "D5: Distributed lag" = d5
   ),
   stars   = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
   gof_map = c("nobs", "r.squared", "adj.r.squared"),
@@ -440,3 +377,325 @@ write_csv(panel, file.path(out_dir, "06_panel_daily.csv"))
 
 cat("Panel saved:", nrow(panel), "LGA-day observations\n")
 cat("\n--- Script complete ---\n")
+
+#----------------------------------------------------------------------------
+
+###################################
+# 8. Facility-level heterogeneity #
+###################################
+
+# Purpose: test whether individual facilities show heterogeneous responses
+# to heat stress that the LGA-level aggregation conceals.
+# Key question for supervisors: is the null finding uniform across all
+# facilities, or do some show strong signals in either direction?
+#
+# NOTE: All facilities within each LGA share the same ERA5 UTCI value —
+# there is no spatial climate variation at this resolution. Facility FE
+# therefore absorbs level differences in visit volume but does NOT add
+# new climate variation. If heterogeneity exists, it reflects differences
+# in facility-level sensitivity to heat (e.g. catchment population,
+# facility type, operational schedule) rather than microclimate.
+# MODIS LST at 1km resolution would be needed to test the true
+# microclimate hypothesis.
+
+cat("\n=== SECTION 8: FACILITY-LEVEL HETEROGENEITY ===\n\n")
+
+# Load facility-level visits — requires health_center_name
+data_fv_fac <- readRDS(
+  file.path(mchtrack_dir, "01_facility_visits_clean.rds")
+) %>%
+  filter(
+    str_detect(tolower(lga_name), "ungogo|gabasawa"),
+    woman_or_child == "child",
+    !rimi_flag
+  ) %>%
+  mutate(
+    visit_date    = as.Date(visit_date),
+    lga_clean     = str_to_title(str_trim(
+      str_remove(lga_name, regex("\\s*lga\\s*$", ignore_case = TRUE))
+    )),
+    facility_name = str_to_title(str_trim(health_center_name))
+  ) %>%
+  filter(
+    visit_date >= as.Date("2024-08-01"),
+    visit_date <= as.Date("2026-03-31")
+  )
+
+cat("Facilities in data:\n")
+data_fv_fac %>%
+  count(lga_clean, facility_name) %>%
+  print(n = 30)
+
+#----------------------------------------------------------------------------
+
+# Build facility x day panel
+visit_fac <- data_fv_fac %>%
+  group_by(lga_clean, facility_name, visit_date) %>%
+  summarise(n_visits = n(), .groups = "drop")
+
+# Full date spine — every facility x day
+fac_list <- data_fv_fac %>%
+  distinct(lga_clean, facility_name)
+
+fac_spine <- expand_grid(
+  fac_list,
+  visit_date = seq(as.Date("2024-08-01"),
+                   as.Date("2026-03-31"),
+                   by = "day")
+)
+
+visit_fac <- fac_spine %>%
+  left_join(visit_fac,
+            by = c("lga_clean", "facility_name", "visit_date")) %>%
+  mutate(n_visits = replace_na(n_visits, 0))
+
+# Merge UTCI — same values for all facilities within LGA
+utci_join <- utci_daily %>%
+  select(lga_clean, date, utci_daily_max, utci_daytime_mean,
+         extreme_heat_38, dow_num, weekend, month_num,
+         year_month, year, hot_season) %>%
+  mutate(visit_date = date)
+
+panel_fac <- visit_fac %>%
+  left_join(utci_join,
+            by = c("lga_clean", "visit_date")) %>%
+  mutate(
+    log_visits = log(n_visits + 1),
+    ym_factor  = as.factor(format(visit_date, "%Y-%m")),
+    # Exclude Eid days — institutional closure unrelated to climate
+    eid_day    = visit_date %in% as.Date(c(
+      "2025-03-30", "2025-03-31", "2025-04-01",  # Eid al-Fitr 2025
+      "2025-06-06", "2025-06-07", "2025-06-08"   # Eid al-Adha 2025
+    )),
+    # Ramadan 2025 indicator — religious calendar confounder
+    ramadan_25 = visit_date >= as.Date("2025-03-01") &
+      visit_date <= as.Date("2025-03-29")
+  ) %>%
+  filter(!is.na(utci_daily_max), !eid_day) %>%
+  arrange(lga_clean, facility_name, visit_date)
+
+cat("\nFacility panel rows:", nrow(panel_fac), "\n")
+cat("Facilities:", n_distinct(panel_fac$facility_name), "\n")
+cat("Eid days excluded: 6\n\n")
+
+# Summary of volume per facility
+cat("--- Volume per facility (non-zero days) ---\n")
+panel_fac %>%
+  filter(n_visits > 0) %>%
+  group_by(lga_clean, facility_name) %>%
+  summarise(
+    n_active_days = n(),
+    mean_visits   = round(mean(n_visits), 1),
+    median_visits = round(median(n_visits), 1),
+    sd_visits     = round(sd(n_visits), 1),
+    pct_zero_all  = round(
+      mean(panel_fac$n_visits[
+        panel_fac$facility_name == first(facility_name)] == 0) * 100, 1),
+    .groups = "drop"
+  ) %>%
+  print(n = 30)
+
+#----------------------------------------------------------------------------
+
+# Run facility-level regression: primary spec (D3 equivalent)
+# + facility FE instead of LGA FE
+# + Ramadan control added (key confounder identified in analysis)
+# Note: clustered SE at facility level (23 facilities — still small)
+
+cat("\n--- Running facility-level regressions ---\n")
+
+# F1: Facility FE + DOW + month-year FE
+f1 <- feols(log_visits ~ extreme_heat_38 | facility_name + dow_num + ym_factor,
+            data    = panel_fac,
+            cluster = ~facility_name)
+
+# F2: + Ramadan control (new — recommended after calendar analysis)
+f2 <- feols(log_visits ~ extreme_heat_38 + ramadan_25 |
+              facility_name + dow_num + ym_factor,
+            data    = panel_fac,
+            cluster = ~facility_name)
+
+# F3: Continuous UTCI with Ramadan control
+f3 <- feols(log_visits ~ utci_daytime_mean + ramadan_25 |
+              facility_name + dow_num + ym_factor,
+            data    = panel_fac %>%
+              mutate(utci_daytime_mean =
+                       utci_daytime_mean -
+                       mean(utci_daytime_mean, na.rm = TRUE)),
+            cluster = ~facility_name)
+
+cat("\n=== FACILITY-LEVEL REGRESSION RESULTS ===\n\n")
+etable(f1, f2, f3,
+       title    = "Facility-level heat and visits · Kano",
+       digits   = 3,
+       se.below = TRUE)
+
+#----------------------------------------------------------------------------
+
+# Per-facility coefficients — the heterogeneity diagnostic
+# Run a separate simple regression for each facility and collect coefficients
+
+cat("\n--- Per-facility coefficient distribution ---\n")
+
+facilities <- unique(panel_fac$facility_name)
+
+fac_coefs <- map_dfr(facilities, function(fac) {
+  
+  sub <- panel_fac %>%
+    filter(facility_name == fac,
+           !weekend,
+           !is.na(extreme_heat_38))
+  
+  # Need at least 60 observations and both heat/non-heat days
+  if (nrow(sub) < 60 ||
+      sum(sub$extreme_heat_38) < 10 ||
+      sum(sub$extreme_heat_38 == 0) < 10) {
+    return(tibble(
+      facility    = fac,
+      lga         = unique(sub$lga_clean),
+      coef        = NA_real_,
+      se          = NA_real_,
+      n           = nrow(sub),
+      flag        = "insufficient data"
+    ))
+  }
+  
+  tryCatch({
+    m <- feols(log_visits ~ extreme_heat_38 | dow_num + ym_factor,
+               data = sub, vcov = "hetero")
+    coef_val <- coef(m)["extreme_heat_38"]
+    se_val   <- se(m)["extreme_heat_38"]
+    tibble(
+      facility = fac,
+      lga      = unique(sub$lga_clean),
+      coef     = coef_val,
+      se       = se_val,
+      n        = nrow(sub),
+      flag     = "ok"
+    )
+  }, error = function(e) {
+    tibble(facility=fac, lga=unique(sub$lga_clean),
+           coef=NA_real_, se=NA_real_, n=nrow(sub), flag="error")
+  })
+})
+
+cat("\nPer-facility coefficients:\n")
+fac_coefs %>%
+  filter(flag == "ok") %>%
+  arrange(lga, coef) %>%
+  mutate(
+    ci_lo  = round(coef - 1.96*se, 3),
+    ci_hi  = round(coef + 1.96*se, 3),
+    sig    = if_else(abs(coef/se) > 1.96, "p<0.05", "n.s."),
+    coef   = round(coef, 3),
+    se     = round(se, 3)
+  ) %>%
+  select(lga, facility, coef, se, ci_lo, ci_hi, sig, n) %>%
+  print(n = 30)
+
+# Summary of heterogeneity
+valid_coefs <- fac_coefs %>% filter(flag == "ok", !is.na(coef))
+
+cat("\n--- Heterogeneity summary ---\n")
+cat("Facilities with valid coefficients:", nrow(valid_coefs), "\n")
+cat("Negative coefficients:",
+    sum(valid_coefs$coef < 0), "/", nrow(valid_coefs), "\n")
+cat("Positive coefficients:",
+    sum(valid_coefs$coef > 0), "/", nrow(valid_coefs), "\n")
+cat("Significant (p<0.05):",
+    sum(abs(valid_coefs$coef / valid_coefs$se) > 1.96), "\n")
+cat("SD of coefficients across facilities:",
+    round(sd(valid_coefs$coef, na.rm = TRUE), 3), "\n")
+cat("Range:", round(min(valid_coefs$coef), 3),
+    "to", round(max(valid_coefs$coef), 3), "\n\n")
+
+cat("Interpretation:\n")
+cat("If SD is large and sign is mixed: heterogeneity exists — MODIS warranted\n")
+cat("If SD is small and all near zero: null is uniform — MODIS unlikely to help\n")
+
+# Check Tudun Fulani visit pattern over time
+panel_fac %>%
+  filter(facility_name == "Tudun Fulani Hf") %>%
+  mutate(month = floor_date(visit_date, "month")) %>%
+  group_by(month) %>%
+  summarise(
+    mean_visits   = round(mean(n_visits), 1),
+    zero_days     = sum(n_visits == 0),
+    total_days    = n(),
+    mean_utci     = round(mean(utci_daytime_mean, na.rm = TRUE), 1),
+    .groups = "drop"
+  ) %>%
+  print(n = 25)
+
+#----------------------------------------------------------------------------
+
+# Coefficient plot — visualise heterogeneity across facilities
+
+valid_plot <- fac_coefs %>%
+  filter(flag == "ok", !is.na(coef)) %>%
+  mutate(
+    sig      = abs(coef/se) > 1.96,
+    ci_lo    = coef - 1.96*se,
+    ci_hi    = coef + 1.96*se,
+    facility = str_wrap(facility, 25),
+    facility = fct_reorder(facility, coef)
+  )
+
+p_fac <- ggplot(valid_plot,
+                aes(x = coef, y = facility, colour = lga)) +
+  geom_vline(xintercept = 0, linewidth = 0.7,
+             colour = "#888780", linetype = "dashed") +
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi),
+                 height = 0.3, linewidth = 0.7, alpha = 0.6) +
+  geom_point(aes(size = sig, shape = sig)) +
+  scale_colour_manual(
+    values = c("Ungogo" = "#D84A38", "Gabasawa" = "#1D6FA4")
+  ) +
+  scale_size_manual(
+    values = c("TRUE" = 3.5, "FALSE" = 2.5),
+    guide  = "none"
+  ) +
+  scale_shape_manual(
+    values = c("TRUE" = 16, "FALSE" = 1),
+    labels = c("TRUE" = "p < 0.05", "FALSE" = "n.s."),
+    name   = NULL
+  ) +
+  labs(
+    title    = "Facility-level heat coefficients — heterogeneity diagnostic",
+    subtitle = "Coefficient on extreme heat day (UTCI ≥ 38°C) · Facility + DOW + month-year FE · Robust SE",
+    x        = "Coefficient on log(visits + 1)",
+    y        = NULL,
+    colour   = "LGA",
+    caption  = paste0(
+      "Each point = one facility · Bars = 95% CI · ",
+      "Filled = p<0.05 · Wide spread suggests microclimate investigation warranted"
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold"),
+    legend.position = "top",
+    axis.text.y     = element_text(size = 9)
+  )
+
+ggsave(
+  filename = file.path(out_dir, "06_facility_heterogeneity.png"),
+  plot     = p_fac,
+  width    = 10, height = 8, dpi = 300
+)
+
+cat("Facility heterogeneity plot saved.\n")
+
+#----------------------------------------------------------------------------
+
+# Save facility panel
+saveRDS(panel_fac,
+        file.path(out_dir, "06_panel_facility.rds"))
+
+write_csv(fac_coefs,
+          file.path(out_dir, "06_facility_coefficients.csv"))
+
+cat("Facility panel and coefficients saved.\n")
+cat("\n--- Section 8 complete ---\n")
+cat("Next step: review heterogeneity summary above and coefficient plot\n")
+cat("before deciding whether MODIS LST extraction is warranted\n")
