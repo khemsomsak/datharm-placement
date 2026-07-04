@@ -2,7 +2,7 @@
 #  Child-Level Regression Analysis                     #
 #  ZD Predictors & Tracing Effectiveness               #
 #  Created on 28/5/2026                                #
-#  Last Updated 28/5/2026                              #
+#  Last Updated 03/7/2026                              #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -87,11 +87,18 @@ data_model_a <- data_ll_clean %>%
     # binary gender
     gender_female      = as.integer(gender == "female"),
     
-    # primary sample excludes Rimi LGA backfill
-    in_primary_sample  = !rimi_flag
+    # FIX 1: primary sample excludes Rimi LGA backfill AND unattributed "Null" LGA
+    # "Null" LGA confirmed present in script 01 output audit (July 2026)
+    in_primary_sample  = !rimi_flag & (lga_name != "Null")
     
   ) %>%
-  filter(!is.na(hf_distance_km))
+  filter(!is.na(hf_distance_km)) %>%
+  # FIX 2: deduplicate pseudo_ids — keep earliest registration per child
+  # 1,953 duplicate pseudo_ids confirmed in primary sample (output audit July 2026)
+  # rule: first registration by date retained; duplicates likely re-registrations
+  # or transfers between facilities generating new records
+  arrange(pseudo_id, registration_date) %>%
+  distinct(pseudo_id, .keep_all = TRUE)
 
 #Validate: zero-dose rates and sample composition ----
 cat("Model A dataset:\n")
@@ -106,7 +113,9 @@ data_model_a %>%
     median_age_reg = round(median(age_months_at_reg, na.rm = TRUE), 1)
   ) %>%
   print()
-cat("\n")
+# FIX 2 (cont.): confirm deduplication succeeded
+cat("  Duplicate pseudo_ids after dedup:",
+    sum(duplicated(data_model_a$pseudo_id)), "\n\n")
 
 # 4. Model A1: primary definition, LGA fixed effects -------------------------
 
@@ -174,114 +183,52 @@ modelsummary(
   stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01)
 )
 
-# 9. Independent penta-ZD flag construction -----------------------------------
-# builds ZD flag directly from facility visits — same source as truly-ZD
-# allows valid like-for-like comparison between definitions
-# separate from MCHTrack operational flag which cannot be inspected
+# 9. Zero-dose definition comparison table ------------------------------------
+# FIX 3: two valid definitions compared within the 12-23m age window only.
+# Definitions: zd_mchtrack_pct (Def 1) and zd_truly_pct (Def 2).
+# NOTE: an independent penta-ZD flag constructed from facility visit records
+# was tested but found analytically invalid — 94.4% of 12-23m children were
+# flagged because most enrolled children have no MCHTrack facility visit record
+# at all, not because they are genuinely unvaccinated. The flag conflates
+# platform non-engagement with non-receipt and has been dropped from all outputs.
 
-#Children with a Penta_1 record in MCHTrack facility visits ----
-data_penta1_received <- data_fv_clean %>%
-  filter(woman_or_child == "child") %>%
-  filter(str_detect(vaccines_administered, "Penta_1")) %>%
-  distinct(patient_id) %>%
-  mutate(has_penta1_record = TRUE)
-
-#Join onto model A dataset and construct independent flags ----
-data_model_a <- data_model_a %>%
-  left_join(data_penta1_received,
-            by = c("pseudo_id" = "patient_id")) %>%
-  mutate(
-    
-    # Independent penta-ZD: no Penta_1 record in MCHTrack facility visits
-    # same source and missing data structure as zero_dose_truly
-    # age window applied to match standard 12-23m definition
-    zero_dose_independent = as.integer(
-      is.na(has_penta1_record) &
-        age_months_at_reg >= 12 &
-        age_months_at_reg < 24
-    ),
-    
-    # Independent truly-ZD: already constructed but rename for clarity
-    # no vaccine of any kind in MCHTrack facility visits
-    zero_dose_truly_fv = zero_dose_truly,
-    
-    # MCHTrack flag agreement check: does independent flag match programme flag?
-    # TRUE = agreement, FALSE = discrepancy worth investigating
-    flag_agrees = (zero_dose_independent == zero_dose_penta)
-    
-  )
-
-#Agreement check summary ----
-data_model_a %>%
-  filter(in_primary_sample, age_months_at_reg >= 12, age_months_at_reg < 24) %>%
-  group_by(state) %>%
-  summarise(
-    n_in_window       = n(),
-    n_agree           = sum(flag_agrees,          na.rm = TRUE),
-    pct_agree         = round(mean(flag_agrees,   na.rm = TRUE) * 100, 1),
-    independent_zd_n  = sum(zero_dose_independent, na.rm = TRUE),
-    mchtrack_zd_n     = sum(zero_dose_penta,       na.rm = TRUE),
-    discrepancy_n     = abs(independent_zd_n - mchtrack_zd_n)
-  ) %>%
-  print()
-
-# 10. Zero-dose definition comparison table -----------------------------------
-# now valid like-for-like: independent penta-ZD and truly-ZD drawn from
-# same source (facility visits); MCHTrack flag shown as reference only
-
-#Restrict to 12-23m window for all definitions to ensure comparability ----
-data_model_a %>%
+data_zd_comparison <- data_model_a %>%
   filter(in_primary_sample, age_months_at_reg >= 12, age_months_at_reg < 24) %>%
   group_by(state, lga_name) %>%
   summarise(
     n_children            = n(),
-    # MCHTrack operational flag — reference only, different source
-    zd_mchtrack_pct       = round(mean(zero_dose_penta,       na.rm = TRUE) * 100, 1),
-    # Independent penta-ZD — constructed from facility visits
-    zd_independent_pct    = round(mean(zero_dose_independent, na.rm = TRUE) * 100, 1),
-    # Truly-ZD — no vaccine at all, same source as independent
-    zd_truly_pct          = round(mean(zero_dose_truly_fv,    na.rm = TRUE) * 100, 1),
-    # Gap: truly-ZD minus independent penta-ZD
-    # positive = children with no vaccines at all beyond those missing penta-1
-    gap_truly_vs_penta    = round(
-      mean(zero_dose_truly_fv,    na.rm = TRUE) * 100 -
-        mean(zero_dose_independent, na.rm = TRUE) * 100, 1),
+    zd_mchtrack_pct       = round(mean(zero_dose_penta, na.rm = TRUE) * 100, 1),
+    zd_truly_pct          = round(mean(zero_dose_truly, na.rm = TRUE) * 100, 1),
+    gap_truly_vs_mchtrack = round(
+      mean(zero_dose_truly, na.rm = TRUE) * 100 -
+        mean(zero_dose_penta, na.rm = TRUE) * 100, 1),
     .groups = "drop"
   ) %>%
-  arrange(state, lga_name) %>%
-  print(n = Inf)
+  arrange(state, lga_name)
 
-#Overall totals ----
+cat("ZD definition comparison (12-23m window, primary sample):\n")
+print(data_zd_comparison, n = Inf)
+
+# Overall totals
+cat("\nOverall totals:\n")
 data_model_a %>%
   filter(in_primary_sample, age_months_at_reg >= 12, age_months_at_reg < 24) %>%
   summarise(
-    n_children          = n(),
-    zd_mchtrack_pct     = round(mean(zero_dose_penta,       na.rm = TRUE) * 100, 1),
-    zd_independent_pct  = round(mean(zero_dose_independent, na.rm = TRUE) * 100, 1),
-    zd_truly_pct        = round(mean(zero_dose_truly_fv,    na.rm = TRUE) * 100, 1)
+    n_children      = n(),
+    zd_mchtrack_pct = round(mean(zero_dose_penta, na.rm = TRUE) * 100, 1),
+    zd_truly_pct    = round(mean(zero_dose_truly, na.rm = TRUE) * 100, 1)
   ) %>%
   print()
+cat("\n")
 
-#Save CSV ----
-data_model_a %>%
-  filter(in_primary_sample, age_months_at_reg >= 12, age_months_at_reg < 24) %>%
-  group_by(state, lga_name) %>%
-  summarise(
-    n_children            = n(),
-    zd_mchtrack_pct       = round(mean(zero_dose_penta,       na.rm = TRUE) * 100, 1),
-    zd_independent_pct    = round(mean(zero_dose_independent, na.rm = TRUE) * 100, 1),
-    zd_truly_pct          = round(mean(zero_dose_truly_fv,    na.rm = TRUE) * 100, 1),
-    gap_truly_vs_penta    = round(
-      mean(zero_dose_truly_fv,    na.rm = TRUE) * 100 -
-        mean(zero_dose_independent, na.rm = TRUE) * 100, 1),
-    .groups = "drop"
-  ) %>%
-  arrange(state, lga_name) %>%
-  write_csv(file.path(out_dir, "00_zd_definition_comparison.csv"))
+write_csv(data_zd_comparison,
+          file.path(out_dir, "00_zd_definition_comparison.csv"))
 
 # 10. Ward-level residuals from Model A1 ---------------------------------------
 # wards with large positive residuals = higher ZD than predictors explain
 # operationally useful as a targeting output for programme team
+# FIX 5 (via Fix 1): "Null" LGA excluded via in_primary_sample flag —
+# no additional filter needed here
 
 data_ward_residuals <- data_model_a %>%
   filter(in_primary_sample, !is.na(facility_ward)) %>%
@@ -308,38 +255,38 @@ cat("\n")
 
 # 11. Build child-level analysis dataset for Model B --------------------------
 
-  #Build lag time: days between last facility visit and tracing contact ----
-  # join most recent pre-tracing visit date per patient from facility visits
+#Build lag time: days between last facility visit and tracing contact ----
+# join most recent pre-tracing visit date per patient from facility visits
 
-  data_last_visit <- data_fv_clean %>%
-    filter(woman_or_child == "child") %>%
-    select(patient_id, visit_date) %>%
-    rename(fv_visit_date = visit_date)
+data_last_visit <- data_fv_clean %>%
+  filter(woman_or_child == "child") %>%
+  select(patient_id, visit_date) %>%
+  rename(fv_visit_date = visit_date)
 
-  data_dt_lagged <- data_dt_clean %>%
-    mutate(tracing_date = as.Date(created_on)) %>%
-    left_join(data_last_visit, by = c("patient_id"),
-              relationship = "many-to-many") %>%
-    filter(fv_visit_date < tracing_date) %>%
-    group_by(id) %>%
-    slice_max(fv_visit_date, n = 1, with_ties = FALSE) %>%
-    ungroup() %>%
-    mutate(
-      days_since_visit = as.numeric(tracing_date - fv_visit_date)
-    ) %>%
-    select(id, fv_visit_date, tracing_date, days_since_visit)
-  
-  #Join back onto tracing records ----
-  data_dt_clean <- data_dt_clean %>%
-    left_join(data_dt_lagged, by = "id")
+data_dt_lagged <- data_dt_clean %>%
+  mutate(tracing_date = as.Date(created_on)) %>%
+  left_join(data_last_visit, by = c("patient_id"),
+            relationship = "many-to-many") %>%
+  filter(fv_visit_date < tracing_date) %>%
+  group_by(id) %>%
+  slice_max(fv_visit_date, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(
+    days_since_visit = as.numeric(tracing_date - fv_visit_date)
+  ) %>%
+  select(id, fv_visit_date, tracing_date, days_since_visit)
 
-  cat("Lag time variable — coverage:\n")
-  cat("  Records with lag time: ",
-      sum(!is.na(data_dt_clean$days_since_visit)), "\n")
-  cat("  Records without match:",
-      sum( is.na(data_dt_clean$days_since_visit)), "\n")
-  cat("  Median days since visit:",
-      round(median(data_dt_clean$days_since_visit, na.rm = TRUE), 0), "\n\n")
+#Join back onto tracing records ----
+data_dt_clean <- data_dt_clean %>%
+  left_join(data_dt_lagged, by = "id")
+
+cat("Lag time variable — coverage:\n")
+cat("  Records with lag time: ",
+    sum(!is.na(data_dt_clean$days_since_visit)), "\n")
+cat("  Records without match:",
+    sum( is.na(data_dt_clean$days_since_visit)), "\n")
+cat("  Median days since visit:",
+    round(median(data_dt_clean$days_since_visit, na.rm = TRUE), 0), "\n\n")
 
 data_model_b <- data_dt_clean %>%
   mutate(
@@ -379,19 +326,41 @@ data_model_b <- data_dt_clean %>%
   ) %>%
   filter(!is.na(tracing_outcome))
 
-#Validate: outcome distribution and sample composition ----
-cat("Model B dataset:\n")
+# FIX 4: expanded validation — recovery rates shown under two denominators
+# to reconcile thesis-cited 22% figure with observed 42.6% in primary sample
+cat("Model B dataset — recovery rates by denominator:\n")
+
+# Denominator 1: all tracing records with non-null outcome (programme-reported rate)
+cat("  [1] All tracing records (primary sample, outcome non-null):\n")
 data_model_b %>%
   filter(in_primary_sample) %>%
   summarise(
-    n_traced             = n(),
-    strict_pct           = round(mean(recovered_strict,     na.rm = TRUE) * 100, 1),
-    permissive_pct       = round(mean(recovered_permissive, na.rm = TRUE) * 100, 1),
-    reached_pct          = round(mean(child_reached,        na.rm = TRUE) * 100, 1),
-    pct_sms              = round(mean(method_sms,           na.rm = TRUE) * 100, 1)
+    n                = n(),
+    strict_pct       = round(mean(recovered_strict,     na.rm = TRUE) * 100, 1),
+    permissive_pct   = round(mean(recovered_permissive, na.rm = TRUE) * 100, 1),
+    reached_pct      = round(mean(child_reached,        na.rm = TRUE) * 100, 1),
+    pct_sms          = round(mean(method_sms,           na.rm = TRUE) * 100, 1)
   ) %>%
   print()
-cat("\n")
+
+# Denominator 2: regression subsample (records with days_since_visit only)
+# NOTE: 59% of records have no lag time — this subset is non-random;
+# excludes children with no prior MCHTrack visit, likely the hardest to reach
+cat("  [2] Regression subsample (with days_since_visit only):\n")
+data_model_b %>%
+  filter(in_primary_sample, !is.na(days_since_visit)) %>%
+  summarise(
+    n                = n(),
+    strict_pct       = round(mean(recovered_strict,     na.rm = TRUE) * 100, 1),
+    permissive_pct   = round(mean(recovered_permissive, na.rm = TRUE) * 100, 1),
+    reached_pct      = round(mean(child_reached,        na.rm = TRUE) * 100, 1),
+    pct_sms          = round(mean(method_sms,           na.rm = TRUE) * 100, 1)
+  ) %>%
+  print()
+
+cat("\nNOTE: thesis draft cited 22% strict recovery rate. Neither denominator",
+    "\nabove reproduces this. Likely derived from identified ZD children (n=4,205)",
+    "\nas denominator rather than all tracing records. Reconcile before second draft.\n\n")
 
 # 12. Model B1: strict outcome, LGA fixed effects — primary spec ---------------
 
@@ -428,6 +397,9 @@ m_b3 <- feglm(
 
 # 15. Model B4: robustness — state interaction on tracing method ---------------
 # tests whether SMS advantage differs between Kano and Katsina
+# NOTE: interaction term is non-significant (coef -0.113, SE 0.263)
+# state-level reversal in thesis narrative is a descriptive pattern,
+# not a regression-confirmed differential effect
 
 m_b4 <- feglm(
   recovered_strict ~ method_sms * state + hf_distance_km + age_months_tracing +
@@ -477,6 +449,7 @@ saveRDS(data_ward_residuals,
         file.path(out_dir, "03_ward_residuals_model_a.rds"))
 
 cat("All outputs saved to:", out_dir, "\n")
+cat("  00_zd_definition_comparison.csv\n")
 cat("  01_model_a_zerodose_predictors.txt\n")
 cat("  02_model_b_tracing_effectiveness.txt\n")
 cat("  03_model_a_dataset.rds\n")
