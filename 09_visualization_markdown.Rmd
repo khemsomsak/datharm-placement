@@ -1,0 +1,241 @@
+---
+title: "Regression Results"
+author: "Suntiparp Somsak"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: false
+    self_contained: true
+    css: |
+      body { font-family: "Georgia", serif; font-size: 14px; color: #222; max-width: 960px; margin: auto; padding: 2em; }
+      h3 { font-size: 1.05em; font-weight: bold; margin-top: 2em; margin-bottom: 0.3em; color: #333; }
+      p.note { font-size: 0.82em; color: #555; line-height: 1.6; margin-top: 0.6em; }
+      .table { font-size: 0.88em; }
+      .table thead th { background-color: #1D6FA4; color: white; border-bottom: none; }
+      .table tbody td { vertical-align: middle; }
+      .table-striped tbody tr:nth-of-type(odd) { background-color: #f7fafd; }
+      hr { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+---
+
+```{r setup, include=FALSE}
+
+# 09_visualizations.Rmd
+# Regression result tables: zero-dose model, recovery model,
+# weather model, and model details
+# Created: July 2026 | Last Updated: 03/07/2026
+
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+
+#--- Paths ---
+home    <- "C:/Users/HP/Documents/GitHub/datharm-placement"
+reg_dir <- file.path(home, "03_output/03_regression")
+
+#--- Parse modelsummary txt ---
+parse_ms_txt <- function(path) {
+  if (!file.exists(path)) return(NULL)
+  lines <- readLines(path, warn = FALSE)
+  rows  <- lines[str_detect(lines, "\\|") &
+                 !str_detect(lines, "^[+=]+$") &
+                 !str_detect(lines, "^\\+[-=+]+\\+$")]
+  map_dfr(rows, function(r) {
+    cells <- str_split(r, "\\|")[[1]] %>% str_trim() %>% .[. != ""]
+    if (length(cells) >= 2) tibble(term = cells[1], values = list(cells[-1]))
+    else NULL
+  })
+}
+
+ev <- function(parsed, label, col = 1) {
+  if (is.null(parsed)) return(NA_character_)
+  row <- parsed %>% filter(str_detect(term, fixed(label)))
+  if (nrow(row) == 0 || length(row$values[[1]]) < col) return(NA_character_)
+  str_trim(row$values[[1]][col])
+}
+
+fb <- function(live, hard) if (is.na(live) || live == "") hard else live
+
+ma <- parse_ms_txt(file.path(reg_dir, "01_model_a_zerodose_predictors.txt"))
+mb <- parse_ms_txt(file.path(reg_dir, "02_model_b_tracing_effectiveness.txt"))
+
+#--- Helper: format coef + 95% CI as two-line cell ---
+ci_cell <- function(coef, se_num, stars = "") {
+  se   <- as.numeric(se_num)
+  lo   <- round(as.numeric(coef) - 1.96 * se, 3)
+  hi   <- round(as.numeric(coef) + 1.96 * se, 3)
+  coef_fmt <- paste0(coef, stars)
+  ci_fmt   <- paste0("<small style='color:#666'>[", lo, ", ", hi, "]</small>")
+  paste0(coef_fmt, "<br>", ci_fmt)
+}
+
+#--- Zero-dose model ---
+a1_dist  <- ci_cell("0.043",  "0.023", "*")
+a2_dist  <- ci_cell("0.627",  "0.199", "***")
+a1_age   <- ci_cell("0.003",  "0.001", "**")
+a2_age   <- ci_cell("0.061",  "0.008", "***")
+a1_sex   <- ci_cell("0.041",  "0.032", "")
+a2_sex   <- ci_cell("0.040",  "0.039", "")
+a1_n     <- fb(ev(ma,"Num.Obs",1), "69,366")
+a2_n     <- fb(ev(ma,"Num.Obs",2), "69,366")
+a1_r2    <- fb(ev(ma,"R2 ",1),     "0.061")
+a2_r2    <- fb(ev(ma,"R2 ",2),     "0.220")
+
+#--- Recovery model ---
+b1_sms   <- ci_cell("0.444",  "0.145", "***")
+b1_dist  <- ci_cell("-0.051", "0.061", "")
+b1_age   <- ci_cell("-0.005", "0.003", "")
+b1_lag   <- ci_cell("-0.001", "0.001", "")
+b1_n     <- fb(ev(mb,"Num.Obs",1), "16,132")
+b1_r2    <- fb(ev(mb,"R2 ",1),     "0.117")
+
+```
+
+### Table 1. &nbsp; Zero-dose model and recovery model
+
+```{r tab-zd-rec}
+
+df <- tribble(
+  ~term,                                    ~c1,      ~c2,      ~c3,            ~c4,
+  "Distance to health facility (km)",       a1_dist,  a2_dist,  b1_dist,        b1_dist,
+  "Age at registration / tracing (months)", a1_age,   a2_age,   b1_age,         b1_age,
+  "Female (ref: male)",                     a1_sex,   a2_sex,   "—",            "—",
+  "SMS / phone contact (ref: home visit)",  "—",      "—",      b1_sms,         b1_sms,
+  "Days since last facility visit",         "—",      "—",      b1_lag,         b1_lag,
+  "<em>N</em>",                             a1_n,     a2_n,     "40,236",       b1_n,
+  "<em>R²</em>",                            a1_r2,    a2_r2,    "0.117",        b1_r2
+)
+
+df %>%
+  kbl(
+    col.names = c("", "(1)", "(2)", "(3)", "(4)"),
+    align     = c("l","r","r","r","r"),
+    escape    = FALSE
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped","hover","condensed","bordered"),
+    full_width = TRUE, font_size = 13
+  ) %>%
+  add_header_above(
+    c(" " = 1,
+      "Zero-dose model" = 2,
+      "Recovery model"  = 2),
+    background = c("white", "#1D6FA4", "#BA7517"),
+    color      = c("white", "white",   "white"),
+    bold       = TRUE
+  ) %>%
+  add_header_above(
+    c(" " = 1,
+      "Primary definition" = 1,
+      "Strict definition"  = 1,
+      "Full sample"        = 1,
+      "Lag-time subset"    = 1),
+    italic = TRUE, line = FALSE, font_size = 11
+  ) %>%
+  column_spec(1, width = "22em") %>%
+  column_spec(2:5, width = "10em") %>%
+  row_spec(5, extra_css = "border-bottom: 1px solid #ccc;") %>%
+  row_spec(6:7, extra_css = "font-style: italic; border-top: 1px solid #ccc;")
+
+```
+
+<p class="note">
+**Notes.** Estimates on the log-odds scale; 95% confidence intervals in brackets. Standard errors clustered at the ward level (zero-dose model) and LGA level (recovery model). The zero-dose primary definition uses the MCHTrack penta-ZD flag (children 12–23 months, no recorded first pentavalent dose); the strict definition requires no vaccine contact of any kind in facility records and cannot detect off-network vaccination. Recovery is defined as confirmed return to MCHTrack services (*yes_ok* only); the lag-time subset is restricted to records with a prior facility visit date on file. Rimi LGA excluded throughout. &nbsp; &#42;&nbsp;p&nbsp;&lt;&nbsp;0.10 &nbsp; &#42;&#42;&nbsp;p&nbsp;&lt;&nbsp;0.05 &nbsp; &#42;&#42;&#42;&nbsp;p&nbsp;&lt;&nbsp;0.01
+</p>
+
+<hr>
+
+### Table 2. &nbsp; Weather model
+
+```{r tab-weather}
+
+wx <- tribble(
+  ~Spec, ~Variable,       ~Measure,                                                ~Coef_CI,                                                            ~Panel,    ~FE,                       ~N,      ~R2,
+  "W1",  "Precipitation", "Days per month above 38°C (monthly)",                   ci_cell("-0.006","0.002","***"),                                      "Monthly", "LGA",                     "24",    "0.942",
+  "W2",  "Precipitation", "Daily precipitation anomaly (% of long-term average)",  ci_cell("-0.006","0.002",""),                                         "Daily",   "LGA, DOW, month-year",    "1,216", "0.698",
+  "W3",  "Heat",          "Extreme heat day (UTCI ≥ 38°C, binary)",                ci_cell("-0.056","0.089",""),                                         "Daily",   "LGA, DOW, month-year",    "1,216", "0.698",
+  "W4",  "Heat",          "Daytime mean UTCI (°C, centred)",                       ci_cell("0.019","0.014",""),                                          "Daily",   "LGA, DOW, month-year",    "1,216", "0.698",
+  "W5",  "Vegetation",    "NDVI seasonal level (vim, centred)",                    ci_cell("0.036","0.193",""),                                          "Monthly", "LGA",                     "40",    "0.910",
+  "W6",  "Vegetation",    "NDVI within-baseline anomaly (viq percentile, centred)",ci_cell("-0.053","0.016","***"),                                      "Monthly", "LGA, month-year",         "40",    "0.989"
+)
+
+wx %>%
+  mutate(Variable = if_else(duplicated(Variable), "", Variable)) %>%
+  kbl(
+    col.names = c("", "Variable", "Exposure measure",
+                  "Coef. [95% CI]", "Panel", "Fixed effects", "N", "R²"),
+    align  = c("c","l","l","r","c","l","r","r"),
+    escape = FALSE
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped","hover","condensed","bordered"),
+    full_width = TRUE, font_size = 13
+  ) %>%
+  column_spec(1, width = "2.5em", bold = TRUE, color = "#888") %>%
+  column_spec(2, width = "9em",   bold = TRUE) %>%
+  column_spec(3, width = "24em") %>%
+  column_spec(4, width = "12em",  bold = TRUE, monospace = TRUE) %>%
+  column_spec(5, width = "6em") %>%
+  column_spec(6, width = "16em") %>%
+  column_spec(7:8, width = "5em") %>%
+  row_spec(c(3,4), background = "#FFF8EE") %>%
+  row_spec(c(5,6), background = "#F0F7EE") %>%
+  row_spec(2, extra_css = "border-bottom: 1px solid #bbb;") %>%
+  row_spec(4, extra_css = "border-bottom: 1px solid #bbb;")
+
+```
+
+<p class="note">
+**Notes.** Outcome: log(daily or monthly visits + 1), OLS throughout. All specifications cover Kano state only (Ungogo and Gabasawa LGAs, Aug 2024–Mar 2026). W1 has N = 24 (two sites × twelve months) — degrees of freedom are insufficient for reliable inference and the significant coefficient should not be read as a substantive finding; sign reversals appear in that panel on addition of further fixed effects. W6 is significant but reflects cross-LGA level differences between Gabasawa and Ungogo within each month-year cell rather than a within-unit temporal response; retained for transparency only. High R² values throughout are driven by fixed-effect absorption of seasonal and calendar variance, not by the weather predictors. &nbsp; &#42;&nbsp;p&nbsp;&lt;&nbsp;0.10 &nbsp; &#42;&#42;&nbsp;p&nbsp;&lt;&nbsp;0.05 &nbsp; &#42;&#42;&#42;&nbsp;p&nbsp;&lt;&nbsp;0.01
+</p>
+
+<hr>
+
+### Table 3. &nbsp; Model details
+
+```{r tab-details}
+
+det <- tribble(
+  ~Detail,           ~Z1,                     ~Z2,                   ~R3,                ~R4,                  ~W,
+  "Specification",   "Primary",               "Strict",              "Full sample",      "Lag-time subset",    "Primary",
+  "Outcome",         "ZD flag (penta, 12–23m)","No vaccine contact", "Confirmed return", "Confirmed return",   "log(visits + 1)",
+  "Estimator",       "feglm logistic",        "feglm logistic",      "feglm logistic",   "feglm logistic",     "feols OLS",
+  "Fixed effects",   "LGA",                   "LGA",                 "LGA",              "LGA",                "LGA, DOW, month-year",
+  "Std. errors",     "Ward-clustered",        "Ward-clustered",      "LGA-clustered",    "LGA-clustered",      "Robust HC1",
+  "<em>N</em>",      "69,366",                "69,366",              "40,236",           "16,132",             "1,216",
+  "<em>R²</em>",     "0.061",                 "0.220",               "0.117",            "0.117",              "0.698"
+)
+
+det %>%
+  kbl(
+    col.names = c("", "(1)", "(2)", "(3)", "(4)", "(5)"),
+    align     = c("l","c","c","c","c","c"),
+    escape    = FALSE
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("hover","condensed","bordered"),
+    full_width = TRUE, font_size = 13
+  ) %>%
+  add_header_above(
+    c(" " = 1,
+      "Zero-dose model" = 2,
+      "Recovery model"  = 2,
+      "Weather model"   = 1),
+    background = c("white","#1D6FA4","#BA7517","#3A7D44"),
+    color      = c("white","white","white","white"),
+    bold       = TRUE
+  ) %>%
+  column_spec(1, bold = TRUE, width = "12em") %>%
+  column_spec(2:6, width = "12em") %>%
+  row_spec(5, extra_css = "border-bottom: 1px solid #ccc;") %>%
+  row_spec(6:7, extra_css = "font-style: italic;")
+
+```
+
+<p class="note">
+**Notes.** Columns (1) and (2) share the same predictor set; the strict outcome (2) requires no vaccine of any kind in facility records. Column (4) is restricted to tracing records with a prior facility visit date on file — this subset likely over-represents children with some prior system contact. The weather model R² of 0.698 is driven by day-of-week and month-year fixed effects; with LGA fixed effects only it is 0.088. Rimi LGA excluded from all specifications.
+</p>
+
