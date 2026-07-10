@@ -1,0 +1,815 @@
+---
+title: "MCHTrack: Six Changes That Matter Most"
+subtitle: "Internal Datharm Data Audit Findings and Recommendations"
+author: "Suntiparp Somsak · in collaboration with Dr. Ahmed Ismail"
+date: "July 2026"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 2
+    number_sections: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+# Force English month names and the Gregorian calendar for all date output,
+# regardless of the local machine's system locale (e.g. Thai Buddhist-era
+# Windows locales, which otherwise leak into scale_x_date() labels).
+Sys.setlocale("LC_TIME", "C")
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+```
+
+<style>
+/* --- layout: pin TOC sidebar to a fixed pixel box, push body clear of it.
+   Default tocify CSS uses a percentage width (20%, max 260px) plus a 2%
+   left margin, which does not reliably clear a fixed-pixel body margin at
+   all viewport widths. Overriding both sides to fixed pixel values removes
+   the overlap regardless of window size. --- */
+#TOC, div.tocify {
+  position: fixed !important;
+  left: 0 !important;
+  top: 40px !important;
+  width: 240px !important;
+  max-width: 240px !important;
+  margin-left: 0 !important;
+}
+body {
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  font-size: 16px;
+  color: #1a1a1a;
+  max-width: 820px;
+  margin-left: 300px;
+  margin-right: 2rem;
+  padding: 1.5rem 2rem;
+}
+@media (max-width: 900px) {
+  #TOC, div.tocify { position: relative !important; width: 100% !important; max-width: none !important; left: auto !important; top: auto !important; }
+  body { margin-left: 1rem; }
+}
+
+/* --- headings --- */
+h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  border-bottom: 3px solid #e74c3c;
+  padding-bottom: 0.4rem;
+  margin-top: 2.5rem;
+}
+h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #555;
+  margin-top: 1.5rem;
+}
+
+/* --- coloured boxes --- */
+.rec-box {
+  background: #f8f9fa;
+  border-left: 5px solid #e74c3c;
+  padding: 1rem 1.5rem;
+  margin: 1.5rem 0;
+  border-radius: 0 6px 6px 0;
+}
+.finding-box {
+  background: #fff8e1;
+  border-left: 5px solid #f39c12;
+  padding: 1rem 1.5rem;
+  margin: 1rem 0;
+  border-radius: 0 6px 6px 0;
+}
+.evidence-box {
+  background: #e8f4f8;
+  border-left: 5px solid #3498db;
+  padding: 1rem 1.5rem;
+  margin: 1rem 0;
+  border-radius: 0 6px 6px 0;
+}
+.placeholder {
+  background: #f5f5f5;
+  border: 2px dashed #bbb;
+  border-radius: 6px;
+  padding: 2rem 1.5rem;
+  text-align: center;
+  color: #888;
+  margin: 1.5rem 0;
+  font-style: italic;
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+.caution {
+  font-size: 0.88rem;
+  color: #888;
+  font-style: italic;
+  margin-top: 0.75rem;
+  border-top: 1px solid #ddd;
+  padding-top: 0.5rem;
+}
+
+/* --- figure captions: visually distinguished from main text --- */
+p.caption, caption {
+  font-style: italic;
+  font-size: 0.88rem;
+  color: #555;
+  text-align: left;
+  max-width: 100%;
+  margin-top: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 3px solid #ddd;
+  line-height: 1.5;
+}
+
+/* --- illustrative static diagrams (no live data) --- */
+.illustration {
+  background: #fbfbfb;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+}
+.illustration .illus-caption {
+  font-style: italic;
+  font-size: 0.88rem;
+  color: #555;
+  margin-top: 1rem;
+  padding-left: 0.75rem;
+  border-left: 3px solid #ddd;
+}
+
+/* --- bibliography --- */
+.bibliography p {
+  padding-left: 2rem;
+  text-indent: -2rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+</style>
+
+---
+
+> This document summarises six changes recommended following a systematic audit of MCHTrack data from Kano and Katsina states (August 2024--March 2026). Each recommendation is grounded in findings from the MCHTrack data itself. Where evidence from comparable programmes elsewhere is cited, context and limitations are stated alongside it.
+
+---
+
+# 1. Fix the sync protocol before any new state launch
+
+<div class="rec-box">
+**The change:** Implement server-side duplicate detection so a record already in the database cannot be entered a second time. This closes the gap regardless of how devices are shared in the field. Where roster and device supply allow, treat one-device-per-CHW as a complementary goal, not a precondition: the Sindh registry cited below achieves full deduplication through server-side checks alone, with no device-assignment rule.
+</div>
+
+## What was found
+
+During the Katsina rollout, field devices were handed to facility officials during a transition period. When devices were returned and synced, records already submitted re-entered the database: the same child visit appeared multiple times with identical content.
+
+<div class="finding-box">
+Katsina linelisted table: **22.1% of child records were duplicates** (7,744 duplicate entries out of 35,059 total). Katsina facility visits: **approximately 38.9% of records were duplicates** based on comparison between the raw database export and the cleaned CSV output. Kano tables were clean throughout (DATHARM, 2026a; DATHARM, 2026b).
+</div>
+
+The practical consequence: ward-level zero-dose rates in Katsina appeared artificially elevated. Wards that appeared most problematic in the residual analysis may have been flagged partly because their records were inflated, not because their true burden is highest.
+
+Kano is omitted below: its exports had no duplicates, so a Kano bar would only sit flat at zero. The chart shows, for Katsina only, how many times individual records were copied by the sync error. A set size of 3 means the same record entered the database three times.
+
+```{r fig1a, fig.cap="Figure 1A: Duplicate-record set sizes, Katsina only. Bars show rows created by a record synced the stated number of times. Sets identified on pseudo_id (linelisted) and on patient_id, visit_date, health_center_id, vaccines_administered (facility visits); blank rows excluded. Rare sizes (7, 9, 10, 12-16, 22, 164) pooled into 'Other'. Source: DATHARM, 2026a; DATHARM, 2026b.", fig.width=8.2, fig.height=4.4}
+
+dup_dist <- data.frame(
+  Table    = rep(c("Linelisted (children enrolled)", "Facility visits (vaccination records)"), each = 9),
+  Set_size = rep(c("2", "3", "4", "5", "6", "8", "11", "82", "Other"), times = 2),
+  N_rows   = c(1874, 1743,  120,  280,    0, 1408, 1925, 2378,   0,
+               4324, 2976,  420, 1135,  126, 1384, 5544, 2460, 738)
+)
+
+dup_dist$Set_size <- factor(dup_dist$Set_size,
+                             levels = c("2", "3", "4", "5", "6", "8", "11", "82", "Other"))
+
+ggplot(dup_dist, aes(x = Set_size, y = N_rows, fill = Table)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.62) +
+  scale_fill_manual(values = c("Linelisted (children enrolled)"        = "#3498db",
+                                "Facility visits (vaccination records)" = "#e74c3c")) +
+  labs(
+    title    = "How many times is the same record being copied via sync?",
+    subtitle = "Katsina only \u2014 Kano had no duplicates",
+    x        = "Number of times a record appears (duplicate set size)",
+    y        = "Rows created by duplication",
+    fill     = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor    = element_blank(),
+    plot.title           = element_text(face = "bold", size = 13),
+    plot.subtitle        = element_text(color = "#666", size = 10.5),
+    legend.position       = "top"
+  )
+```
+
+<div class="finding-box">
+The 8- and 11-copy sets and the small cluster of 82-copy sets are the signature of the device hand-back problem described above: a facility device held onto a submission queue and re-synced it as a batch each time it reconnected, rather than a single stray re-tap.
+</div>
+
+```{r table1a}
+# Real duplicate rows sampled from Katsina facility visits (raw export),
+# compound key: patient_id + visit_date + health_center_id + vaccines_administered.
+# IDs shown truncated to 8 characters for readability -- full values are DATHARM
+# system UUIDs, already pseudonymous.
+table1a <- data.frame(
+  record_id      = c("f9d26c3b", "f9d26c3b", "0b738833", "0b738833", "fa9dbdb0", "fa9dbdb0"),
+  patient_id     = c("00b83bdb", "00b83bdb", "00f960dd", "00f960dd", "01201fe4", "01201fe4"),
+  visit_date     = c("2023-10-12", "2023-10-12", "2024-05-31", "2024-05-31", "2024-03-01", "2024-03-01"),
+  health_center  = c("ba69905f", "ba69905f", "21526f5b", "21526f5b", "ba69905f", "ba69905f"),
+  settlement     = c("Dorowa", "Dorowa", "Siyya A", "Siyya A", "Dorowa", "Dorowa"),
+  vaccines       = c("Penta_1, PCV_1, OPV_1, Rota_1, IPV_1 ... (17 antigens)",
+                      "Penta_1, PCV_1, OPV_1, Rota_1, IPV_1 ... (17 antigens)",
+                      "VitaminA_2, Measles_2",
+                      "VitaminA_2, Measles_2",
+                      "Penta_1, PCV_1, OPV_1, Rota_1, IPV_1",
+                      "Penta_1, PCV_1, OPV_1, Rota_1, IPV_1")
+)
+
+kable(table1a,
+      col.names = c("Record ID", "Patient ID", "Visit date", "Health centre", "Settlement", "Vaccines administered"),
+      caption = "Table 1A: Six duplicated rows from the Katsina facility visits raw export. Each pair shares an identical record ID and compound key: the same database entry appears twice, not just the same clinical event.") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = TRUE, font_size = 13) %>%
+  collapse_rows(columns = 1:5, valign = "top")
+```
+
+## What comparable programmes do
+
+<div class="evidence-box">
+A large-scale electronic immunisation registry in Pakistan's Sindh province, covering over 132 million immunisation dose records and operating through a similar community health worker model, uses server-side idempotency keys. Each submission carries a unique hash of its content, and the server rejects re-submissions with an identical hash before they enter the database (Siddiqi et al., 2025).
+
+<div class="caution">⚠️ That programme operates under a centralised provincial health authority with dedicated IT infrastructure. DATHARM's CHW-tablet model has different sync dynamics. The principle applies; the exact implementation needs adapting to how the MCHTrack backend handles submissions.</div>
+</div>
+
+<div class="illustration">
+<div style="display:flex; gap:2.5rem; flex-wrap:wrap; justify-content:center; text-align:center;">
+
+<div style="flex:0 1 220px; min-width:200px; max-width:240px;">
+<p style="font-weight:600; color:#e74c3c; margin-bottom:1rem;">Current flow</p>
+<div style="display:flex; flex-direction:column; align-items:center; gap:0.3rem;">
+<div style="width:100%; background:#f8f9fa; border:1px solid #ccc; border-radius:6px; padding:0.55rem 0.6rem; font-size:0.85rem;">Device</div>
+<div style="font-size:1.1rem; color:#999; line-height:1;">&darr;</div>
+<div style="width:100%; background:#f8f9fa; border:1px solid #ccc; border-radius:6px; padding:0.55rem 0.6rem; font-size:0.85rem;">Sync</div>
+<div style="font-size:1.1rem; color:#999; line-height:1;">&darr;</div>
+<div style="width:100%; background:#fdecea; border:2px solid #e74c3c; border-radius:6px; padding:0.55rem 0.6rem; font-size:0.85rem; color:#e74c3c; font-weight:600;">
+Database<br><span style="font-weight:400; font-size:0.76rem; display:block; margin-top:0.2rem;">duplicates enter freely</span>
+</div>
+</div>
+<p style="font-size:0.8rem; color:#888; margin-top:0.8rem;">A re-synced submission with an existing ID is written as a new row.</p>
+</div>
+
+<div style="flex:0 1 220px; min-width:200px; max-width:240px;">
+<p style="font-weight:600; color:#2ecc71; margin-bottom:1rem;">Proposed flow</p>
+<div style="display:flex; flex-direction:column; align-items:center; gap:0.3rem;">
+<div style="width:100%; background:#f8f9fa; border:1px solid #ccc; border-radius:6px; padding:0.55rem 0.6rem; font-size:0.85rem;">Device</div>
+<div style="font-size:1.1rem; color:#999; line-height:1;">&darr;</div>
+<div style="width:100%; background:#f8f9fa; border:1px solid #ccc; border-radius:6px; padding:0.55rem 0.6rem; font-size:0.85rem;">Sync</div>
+<div style="font-size:1.1rem; color:#999; line-height:1;">&darr;</div>
+<div style="width:100%; background:#fff8e1; border:1px solid #f39c12; border-radius:6px; padding:0.55rem 0.6rem; font-size:0.85rem;">
+Dedup check<br><span style="font-size:0.76rem; display:block; margin-top:0.2rem;">(id / content hash)</span>
+</div>
+<div style="font-size:1.1rem; color:#999; line-height:1;">&darr;</div>
+<div style="width:100%; background:#eafaf1; border:2px solid #2ecc71; border-radius:6px; padding:0.55rem 0.6rem; font-size:0.85rem; color:#1e8449; font-weight:600;">Database</div>
+</div>
+<p style="font-size:0.8rem; color:#888; margin-top:0.8rem;">Re-submissions matching an existing id or content hash are rejected before they reach the database.</p>
+</div>
+
+</div>
+<p class="illus-caption">Figure 1B: Current vs proposed sync flow. Static illustration; engineer to confirm against the actual MCHTrack sync architecture before implementation.</p>
+</div>
+
+---
+
+# 2. Record what the card shows, not just that it was checked
+
+<div class="rec-box">
+**The change:** When a CHW selects "received immunisation elsewhere" as the defaulter tracing outcome, require them to also record which vaccine was seen on the card and the approximate date. This is one additional field at the point of an existing workflow step. Alongside it, add a system-side check: automatically flag any tracing outcome closed as "yes_ok" (in-network) that has no corresponding facility_visits record for that child, so supervisors can review unverified closures rather than discovering them retrospectively.
+</div>
+
+## What was found
+
+MCHTrack's defaulter tracing form includes a response option for children found to have been vaccinated outside the programme's own facilities: "received immunisation elsewhere" (recorded as `yes_off_network_care`). The protocol already requires a CHW to physically check the child's vaccination card before selecting this option. However, the database records only that the check occurred: not which vaccine was seen, not the date, not the facility (DATHARM, 2026c).
+
+<div class="finding-box">
+The gap between children reported as recovered and those independently verifiable from the records is substantial, and largest in Kano, where a high share of recoveries are attributed to off-network care. The records cannot confirm whether these children are fully vaccinated, partially vaccinated, or whether the card check met the rigour the protocol requires.
+</div>
+
+```{r table2a}
+# Real sample of defaulter tracing rows where tracing_outcome == "yes_off_network_care",
+# both states. patient_id truncated to 8 characters for readability.
+table2a <- data.frame(
+  patient_id      = c("dfa77aa0", "f6739b28", "ceaa528e", "48e07c80",
+                       "4d2c6f71", "b741dc71", "68464604", "52ea5fd7"),
+  state           = c("Kano", "Kano", "Kano", "Katsina",
+                       "Kano", "Katsina", "Kano", "Kano"),
+  tracing_outcome = "yes_off_network_care",
+  tracing_method  = "home_visit",
+  date            = c("2025-07-01", "2025-10-29", "2025-07-19", "2024-07-29",
+                       "2025-05-21", "2024-06-29", "2024-09-24", "2025-12-02"),
+  vaccine_on_card = "NOT RECORDED"
+)
+
+kable(table2a,
+      col.names = c("Patient ID", "State", "Tracing outcome", "Tracing method", "Date", "Vaccine seen on card?"),
+      caption = "Table 2A: Sample of defaulter tracing records where the outcome is 'received immunisation elsewhere' (n = 13,508 across both states). No row records which vaccine the CHW saw on the card.") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = TRUE, font_size = 13) %>%
+  column_spec(6, color = "#e74c3c", bold = TRUE)
+```
+
+This gap is visible directly in the tracing outcomes. Of 33,502 Kano defaulter tracing records, 12,730 (38.0%) close as off-network care with no supporting detail, compared with 778 of 6,214 (12.5%) in Katsina.
+
+"Recovered" is not one number. It depends on how strictly the claim is checked against other MCHTrack tables. The table below defines four levels of increasing strictness, all applied to the same traced-defaulter population by joining defaulter_tracing to facility_visits on patient_id.
+
+```{r table-ladder-legend}
+ladder_legend <- data.frame(
+  Level      = c("L1 \u2014 Maximalist", "L2 \u2014 Strict", "L3 \u2014 Matched", "L4 \u2014 Verified"),
+  Definition = c("yes_ok or yes_off_network_care",
+                 "yes_ok only",
+                 "yes_ok, and the child has a matching facility_visits record (any time)",
+                 "yes_ok, matching facility_visits record, and that record names a vaccine"),
+  Source     = c("defaulter_tracing", "defaulter_tracing",
+                 "defaulter_tracing joined to facility_visits on patient_id",
+                 "defaulter_tracing joined to facility_visits on patient_id and vaccines_administered")
+)
+
+kable(ladder_legend, col.names = c("Level", "Definition", "Source table(s)"),
+      caption = "Legend: how each verification level in Figure 2A is defined.") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = TRUE, font_size = 13) %>%
+  column_spec(1, bold = TRUE, width = "16%")
+```
+
+```{r fig2a, fig.cap="Figure 2A: Recovery rate by state under four verification definitions, from loosest (L1) to strictest (L4). Each level is a share of all traced defaulters in that state. L3/L4 match a yes_ok tracing outcome against any facility_visits record for that patient_id, at any time. Source: DATHARM, 2026c (defaulter tracing); DATHARM, 2026b (facility visits).", fig.width=8.5, fig.height=4.6}
+
+ladder <- data.frame(
+  State      = rep(c("Kano", "Katsina"), each = 4),
+  Level      = rep(c("L1 \u2014 Maximalist", "L2 \u2014 Strict", "L3 \u2014 Matched", "L4 \u2014 Verified"), times = 2),
+  Definition = rep(c("yes_ok + verbal off-network", "yes_ok only",
+                      "yes_ok + facility visit found", "yes_ok + visit + vaccine recorded"), times = 2),
+  Pct        = c(76.3, 38.3, 28.2, 21.6,
+                 83.3, 70.7, 57.5, 35.2)
+)
+ladder$y <- rep(4:1, times = 2)
+ladder$State <- factor(ladder$State, levels = c("Kano", "Katsina"))
+ladder$Level  <- factor(ladder$Level,
+  levels = c("L1 \u2014 Maximalist", "L2 \u2014 Strict", "L3 \u2014 Matched", "L4 \u2014 Verified"))
+
+level_colour <- c("L1 \u2014 Maximalist" = "#27ae60", "L2 \u2014 Strict" = "#2980b9",
+                   "L3 \u2014 Matched"    = "#d68910", "L4 \u2014 Verified" = "#c0392b")
+
+drops <- data.frame(
+  State = rep(c("Kano", "Katsina"), each = 3),
+  y     = rep(c(3.5, 2.5, 1.5), times = 2),
+  label = c("-38.0pp", "-10.1pp", "-6.6pp",
+            "-12.6pp", "-13.2pp", "-22.3pp")
+)
+drops$State <- factor(drops$State, levels = c("Kano", "Katsina"))
+
+ggplot(ladder, aes(x = y, y = Pct, fill = Level)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = paste0(Pct, "%")), hjust = -0.15, size = 4, fontface = "bold") +
+  geom_text(data = drops, aes(x = y, y = 5, label = label),
+            inherit.aes = FALSE, colour = "#c0392b", size = 3, hjust = 0, fontface = "italic") +
+  facet_wrap(~State) +
+  coord_flip(clip = "off") +
+  scale_x_continuous(breaks = 4:1,
+    labels = c("L1\nMaximalist", "L2\nStrict", "L3\nMatched", "L4\nVerified")) +
+  scale_y_continuous(limits = c(0, 100), labels = function(x) paste0(x, "%"), expand = c(0, 0)) +
+  scale_fill_manual(values = level_colour, guide = "none") +
+  labs(title = "\"Recovered\" defaulter rate varies widely by definition used",
+       x = NULL, y = "Share of traced defaulters") +
+  theme_minimal(base_size = 12.5) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    plot.title         = element_text(face = "bold", size = 13),
+    plot.margin        = margin(5.5, 46, 5.5, 5.5),
+    strip.text         = element_text(face = "bold", size = 12)
+  )
+```
+
+<div class="finding-box">
+Even the strict, in-network "yes_ok" closure is not self-verifying. In Kano, only 28.2% of traced defaulters have a matching facility-visits record at all (L3), and only 21.6% have a matching record that also names a vaccine (L4): a 54.7-point gap between what tracing claims and what the vaccination record confirms. Katsina's gap is smaller (48.1pp) but still substantial. This is the same reconciliation problem described in Section 3, where children appeared "resolved" in the ZD table with no corresponding vaccination record. It shows up here too, before a child ever reaches the formal zero-dose registry.
+</div>
+
+## What this would unlock
+
+Recording vaccine type and date at the point of the card check would immediately enable three things that are currently impossible:
+
+- Confirming whether a child recorded as "received elsewhere" is actually fully vaccinated for their age, or whether they still have outstanding doses
+- Identifying which vaccines caregivers are seeking outside the MCHTrack network, which is a direct signal of where the programme is falling short relative to caregiver preference
+- Tracking vaccine drift: whether children identified as zero-dose are completing their schedule through other channels, and which antigens remain uncompleted
+
+## What comparable programmes do
+
+<div class="evidence-box">
+A Missed Opportunities for Vaccination (MOV) study conducted in Ondo State, Nigeria in 2019, using exit interviews with caregivers who had physically reached a health facility, found that roughly one in three left without receiving an indicated vaccine, mostly because no one offered it during the visit rather than because vaccine stock was unavailable. The same study found that caregivers often could not name the vaccine their child had received, identifying it by colour, injection site, or a local informal name (MOV assessment, Ondo State, 2019).
+
+This has a direct bearing on the card-check step. If a CHW records "card checked, immunisation confirmed elsewhere" but no vaccine detail is captured, there is no way to distinguish a fully vaccinated child from one who received a partial schedule.
+
+<div class="caution">⚠️ The Ondo study was conducted at fixed health facilities in southwest Nigeria, measuring what happens at the facility gate rather than what happens during community-based CHW tracing contacts. Its specific figures (32.8%) should not be applied directly to Kano or Katsina. It is cited as evidence that the gap between what cards show and what health systems record is a documented, real problem in Nigeria, not as a precise estimate of its scale in this programme.</div>
+</div>
+
+<div class="illustration">
+<div style="max-width:420px; margin:0 auto; font-size:0.9rem;">
+
+<label style="font-weight:600; display:block; margin-bottom:0.3rem;">Tracing outcome</label>
+<div style="background:#fff; border:1px solid #999; border-radius:4px; padding:0.5rem 0.7rem; margin-bottom:1rem; display:flex; justify-content:space-between;">
+<span>Received immunisation elsewhere</span><span>&#9662;</span>
+</div>
+
+<div style="border-left:3px solid #2ecc71; padding-left:0.8rem; margin-left:0.3rem;">
+<p style="font-size:0.78rem; color:#2ecc71; font-weight:600; margin-bottom:0.5rem;">NEW &mdash; shown only for this outcome</p>
+
+<label style="font-weight:600; display:block; margin-bottom:0.3rem;">Vaccine(s) seen on card</label>
+<div style="background:#fff; border:1px solid #999; border-radius:4px; padding:0.5rem 0.7rem; margin-bottom:1rem; display:flex; justify-content:space-between;">
+<span style="color:#888;">Select all that apply&hellip;</span><span>&#9662;</span>
+</div>
+
+<label style="font-weight:600; display:block; margin-bottom:0.3rem;">Approximate date on card</label>
+<div style="background:#fff; border:1px solid #999; border-radius:4px; padding:0.5rem 0.7rem; margin-bottom:0.3rem; display:flex; justify-content:space-between;">
+<span style="color:#888;">dd / mm / yyyy</span><span>&#128197;</span>
+</div>
+</div>
+
+<p style="font-size:0.78rem; color:#aaa; margin-top:1rem;">For all other outcome options, these two fields stay hidden and disabled.</p>
+</div>
+<p class="illus-caption">Figure 2B: Mockup of the revised tracing form. Static illustration; engineer to adapt field types to the actual MCHTrack form schema.</p>
+</div>
+
+---
+
+# 3. Turn the zero-dose record into a timeline, not a snapshot
+
+<div class="rec-box">
+**The change:** The current identified zero-dose table records a child's ZD status at one point in time and does not update. Replace it with a longitudinal record that captures when a child entered zero-dose status, and when and why they left it.
+</div>
+
+## What was found
+
+MCHTrack maintains a table of children who have been identified as zero-dose (`identified_zd`). Examining this table reveals an important structural limitation: it contains one row per child, with a single tracing outcome field. There is no identification date, no resolution date, and no history of status changes. It functions as a case management snapshot, not a live registry (DATHARM, 2026d).
+
+The table contains 4,205 records in total (Kano: 1,332; Katsina: 2,873), far smaller than the full population of zero-dose-flagged children in the linelisted table. It captures only children who went through the formal ZD identification and tracing workflow, not all enrolled children who are zero-dose.
+
+This means the table cannot answer basic programme questions: How long has this child been zero-dose? When were they resolved, and by what means? Is a child marked "recovered" six months ago still vaccinated today?
+
+<div class="finding-box">
+During this study, DATHARM's data manager was asked to provide an expanded version of this table, including identification date, resolution date, and resolution reason, for both states. The resulting table could not be reconciled with the underlying facility visits data (DATHARM, 2026c; DATHARM, 2026d). Children appeared as resolved in the ZD table with no corresponding vaccination record in facility visits, and dates were inconsistent in ways legitimate off-network care alone could not explain. The table reflects a pipeline designed to flag children at a single point in time, not to track their journey through the system.
+</div>
+
+<div class="illustration">
+<table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+<tr>
+<th style="background:#fdecea; color:#c0392b; text-align:left; padding:0.6rem; border:1px solid #ddd;">Current: identified_zd (one row per child)</th>
+<th style="background:#eafaf1; color:#1e8449; text-align:left; padding:0.6rem; border:1px solid #ddd;">Proposed: status-event log (one row per event)</th>
+</tr>
+<tr><td style="padding:0.55rem; border:1px solid #ddd;">child_id</td><td style="padding:0.55rem; border:1px solid #ddd;">child_id</td></tr>
+<tr><td style="padding:0.55rem; border:1px solid #ddd;">zero_dose (flag)</td><td style="padding:0.55rem; border:1px solid #ddd;">event_type (identified / contact / resolved / re-identified)</td></tr>
+<tr><td style="padding:0.55rem; border:1px solid #ddd;">tracing_outcome (single field)</td><td style="padding:0.55rem; border:1px solid #ddd;">event_date</td></tr>
+<tr><td style="padding:0.55rem; border:1px solid #ddd; color:#c0392b;">&mdash; no identification date</td><td style="padding:0.55rem; border:1px solid #ddd; background:#eafaf1;">identification_date</td></tr>
+<tr><td style="padding:0.55rem; border:1px solid #ddd; color:#c0392b;">&mdash; no resolution date</td><td style="padding:0.55rem; border:1px solid #ddd; background:#eafaf1;">resolution_date</td></tr>
+<tr><td style="padding:0.55rem; border:1px solid #ddd; color:#c0392b;">&mdash; no resolution reason field</td><td style="padding:0.55rem; border:1px solid #ddd; background:#eafaf1;">resolution_reason</td></tr>
+<tr><td style="padding:0.55rem; border:1px solid #ddd; color:#c0392b;">&mdash; cannot repeat if child re-lapses</td><td style="padding:0.55rem; border:1px solid #ddd; background:#eafaf1;">multiple rows per child_id allowed</td></tr>
+</table>
+<p class="illus-caption">Table 3A: Current vs proposed identified_zd structure. Static illustration. Source: DATHARM, 2026d.</p>
+</div>
+
+```{r fig3a-timeline}
+tl <- data.frame(
+  child = factor(c("Child A","Child A","Child A","Child B","Child B","Child C","Child C","Child C","Child C"),
+                  levels = c("Child C","Child B","Child A")),
+  date  = as.Date(c("2024-09-01","2024-10-10","2024-11-02",
+                     "2024-09-15","2025-04-20",
+                     "2024-08-05","2024-08-28","2024-09-20","2025-03-15")),
+  event = c("Identified","Contact","Resolved",
+            "Identified","Resolved",
+            "Identified","Contact","Resolved","Re-identified")
+)
+event_colour <- c("Identified" = "#e74c3c", "Contact" = "#999999",
+                   "Resolved" = "#2ecc71", "Re-identified" = "#e74c3c")
+
+ggplot(tl, aes(x = date, y = child)) +
+  geom_line(aes(group = child), colour = "#ccc", linewidth = 0.6) +
+  geom_point(aes(colour = event), size = 4) +
+  scale_colour_manual(values = event_colour) +
+  scale_x_date(date_labels = "%b %Y") +
+  labs(title = "A single row per child cannot show any of this",
+       x = NULL, y = NULL, colour = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.major.y = element_blank(),
+        panel.grid.minor   = element_blank(),
+        plot.title         = element_text(face = "bold", size = 13),
+        legend.position    = "top")
+```
+<p class="illus-caption">Figure 3A: Illustrative timeline for three example children (constructed for illustration, not drawn from MCHTrack records). Child A resolves in two months; Child B takes seven; Child C relapses and re-enters zero-dose status five months after an earlier resolution.</p>
+
+```{r table3b}
+# Real join: identified_zd "resolved" records (both states) against facility_visits,
+# checking for a visit within 90 days after first_resolved_date. 761 of 1,768
+# resolved cases (43.0%) have no matching visit -- Kano 63.7%, Katsina 29.3%.
+table3b <- data.frame(
+  child_id            = c("3268f1d2", "05816ead", "4c52c601", "71ece8fd",
+                           "5a8b17c8", "3da40512", "e4c5863c", "b2c33385"),
+  state               = c("Kano", "Kano", "Katsina", "Kano",
+                           "Katsina", "Kano", "Katsina", "Kano"),
+  health_centre       = c("Mazan gudu HP", "Santsi HP", "CHC Safana", "Kumbo HP",
+                           "Unguwar Mamman Dee HC", "Santsi HP", "Gallawa HC", "Rijiyar Zaki PHC"),
+  last_tracing_outcome = c("yes_off_network_care", "yes_ok", "yes_off_network_care", "yes_off_network_care",
+                            "yes_off_network_care", "yes_ok", "yes_off_network_care", "yes_off_network_care"),
+  resolved_date       = c("2024-09-23", "2025-09-03", "2025-02-14", "2025-12-09",
+                           "2024-12-11", "2025-09-03", "2024-09-21", "2025-07-12"),
+  post_resolution_visit_90d = "No"
+)
+
+kable(table3b,
+      col.names = c("Child ID", "State", "Health centre", "Last tracing outcome", "Resolved date", "Visit within 90 days?"),
+      caption = "Table 3B: Children marked 'resolved' in identified_zd with no matching facility-visits record within 90 days of resolution (761 of 1,768 cases overall, 43.0%; Kano 63.7%, Katsina 29.3%). Source: DATHARM, 2026d (identified zero-dose); DATHARM, 2026b (facility visits).") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = TRUE, font_size = 13) %>%
+  column_spec(6, color = "#e74c3c", bold = TRUE)
+```
+
+<div class="finding-box">
+Kano's mismatch rate (63.7%) is more than double Katsina's (29.3%), tracking with Kano's heavier reliance on off-network card checks: the same records Table 2A shows carry no vaccine or date detail. The two gaps compound into a resolution that cannot be verified in either direction.
+</div>
+
+## What this would enable
+
+A longitudinal ZD record with entry and exit dates would let the programme compute, for the first time: average time from identification to resolution, whether resolution speed differs by tracing method, LGA, or CHW, and how many children are re-identified as zero-dose after an earlier resolution, a measure of whether recoveries are durable.
+
+---
+
+# 4. Add a denominator
+
+<div class="rec-box">
+**The change:** Record the number of households visited per CHW per enumeration round, not just those yielding an enrollable child. Pair this with any available ward-level population estimate, updated annually.
+</div>
+
+## What was found
+
+Every coverage figure MCHTrack produces is constructed from enrolled counts only. The total number of children who should be in any given ward is unknown to the system (DATHARM, 2026a).
+
+<div class="finding-box">
+DATHARM's Kano project coordinator estimated approximately one in five households are missed during enumeration rounds. This is a single operational estimate, not a measured rate: MCHTrack has no field for households visited but yielding no enrollable child. Without this, no one can verify or update that estimate from the data alone.
+</div>
+
+A rising enrolment count and a rising zero-dose count look identical from the outside. Without a denominator, the programme cannot tell the difference between "we are finding more missed children" and "we are covering more of the total population."
+
+```{r fig4a, fig.cap="Figure 4A: Two constructed wards with identical enrolled and zero-dose counts but different assumed denominators. Illustrative example, not drawn from MCHTrack data.", fig.width=7, fig.height=4}
+
+ward_denom <- data.frame(
+  Ward     = rep(c("Ward A", "Ward B"), each = 3),
+  Category = rep(c("Enrolled, not zero-dose", "Enrolled, zero-dose", "Not yet reached (estimated)"), times = 2),
+  N        = c(160, 40, 20,
+               160, 40, 200)
+)
+ward_denom$Category <- factor(ward_denom$Category,
+  levels = c("Not yet reached (estimated)", "Enrolled, zero-dose", "Enrolled, not zero-dose"))
+
+coverage_labels <- data.frame(Ward = c("Ward A", "Ward B"), Total = c(220, 400), Pct = c("91%", "50%"))
+
+ggplot(ward_denom, aes(x = Ward, y = N, fill = Category)) +
+  geom_col(width = 0.55) +
+  geom_text(data = coverage_labels, aes(x = Ward, y = Total, label = paste0(Pct, " coverage")),
+            inherit.aes = FALSE, vjust = -0.6, fontface = "bold", size = 4.2) +
+  scale_fill_manual(values = c("Not yet reached (estimated)"  = "#ecf0f1",
+                                "Enrolled, zero-dose"          = "#e74c3c",
+                                "Enrolled, not zero-dose"      = "#2ecc71")) +
+  scale_y_continuous(limits = c(0, 480), expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  labs(title = "The number enrolled tells you what you found.\nThe denominator tells you what you missed.",
+       x = NULL, y = "Children", fill = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor    = element_blank(),
+    plot.title           = element_text(face = "bold", size = 12.5),
+    plot.margin           = margin(20, 5.5, 5.5, 5.5),
+    legend.position       = "bottom"
+  ) +
+  guides(fill = guide_legend(nrow = 2))
+```
+
+Both wards show 200 enrolled children and 40 zero-dose. Ward A's estimated 220 eligible children puts coverage at 91%; Ward B's estimated 400 puts it at 50%. Enrolled counts alone cannot tell these two wards apart.
+
+## What comparable programmes do
+
+<div class="evidence-box">
+Several immunisation programmes supported by Gavi across West Africa record total households visited per CHW per round, not only households where an eligible child was enrolled. Nigeria's national health data system (DHIS2) uses projected denominators from the National Population Commission at LGA level for official coverage calculations (Adeyanju et al., 2021).
+
+<div class="caution">⚠️ Nigeria's national census projections carry documented inaccuracies in northern states where population growth and migration patterns are poorly captured. A 2016 national household survey found a gap of over 40 percentage points between administrative and survey-based coverage estimates in some states (Adeyanju et al., 2021). Census figures can serve as a rough order-of-magnitude reference only. A households-visited field recorded by CHWs during their normal workflow is more operationally honest and achievable at DATHARM's current scale.</div>
+</div>
+
+---
+
+# 5. Run regular data diagnostics
+
+<div class="rec-box">
+**The change:** Establish a routine practice of running targeted data quality checks against each new data pull. Several serious issues in the current dataset were only discovered months after they occurred, through retrospective analysis.
+</div>
+
+## What was found
+
+Two examples from the audit illustrate the problem:
+
+**The Mekiya recording error.** A cluster of deaths recorded at tracing in Mekiya ward, Gabasawa LGA, appeared at 3.7 times the Kano average (DATHARM, 2026c). Investigation confirmed a single mobiliser's input error: a clean resolution, but one that sat undetected for months. A check comparing each mobiliser's outcome distribution to the ward average would surface a pattern like this quickly.
+
+**The Rimi backfill.** Data for Rimi LGA showed records with visit dates substantially earlier than their actual entry timestamps (DATHARM, 2026b). This invalidated the entire LGA for primary analysis. The pattern is immediately visible when `visit_date` is compared to `created_on`.
+
+```{r table5a}
+table5a <- data.frame(
+  Check  = c("visit_date substantially earlier than created_on",
+             "Same patient_id + visit_date + facility appearing more than once",
+             "Any individual mobiliser's death or refusal rate far above the ward average",
+             "zero_dose flag still TRUE for a child with a post-enrolment vaccination record",
+             "Enrolled children count declining month-over-month in a ward"),
+  Catches = c("Retroactive / backfilled entry",
+              "Duplicate sync",
+              "Likely entry error",
+              "Stale status",
+              "Possible data loss")
+)
+
+kable(table5a, col.names = c("What to check", "What it catches"),
+      caption = "Table 5A: Five checks for a routine data diagnostics pass, each catching one issue class found in this audit.") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = TRUE, font_size = 13)
+```
+
+```{r fig5a, fig.cap="Figure 5A: Deceased-at-tracing rate by ward, Kano, wards with at least 30 traced defaulters. Mekiya ward (Gabasawa LGA) in red; dashed line marks the Kano-wide average (2.65%). Source: DATHARM, 2026c.", fig.width=8, fig.height=5.5}
+
+ward_dead <- data.frame(
+  Ward = c("Mekiya (Gabasawa)", "Tudun Fulani (Ungogo)", "Rijiyar (Ungogo)", "Maraku (Gabasawa)",
+           "Mekiya (Ungogo)", "Maraku (Kiru)", "Zango (Ungogo)", "Zugachi (Gabasawa)",
+           "Garindanga (Gabasawa)", "Kadawa (Ungogo)", "Gayawa (Ungogo)", "Bachirawa (Ungogo)",
+           "Joda (Gabasawa)", "Bachirawa (Kiru)", "Garindanga, alt. spelling 1 (Gabasawa)",
+           "Garindanga, alt. spelling 2 (Gabasawa)", "Garindanga, alt. spelling 3 (Gabasawa)",
+           "Yautar Arewa (Gabasawa)"),
+  Rate = c(9.89, 4.75, 3.53, 2.60, 2.42, 1.73, 1.09, 0.99, 0.43, 0.19, 0.15, 0.15, 0.03, 0, 0, 0, 0, 0),
+  Flag = c("Mekiya", rep("Other", 17))
+)
+ward_dead$Ward <- factor(ward_dead$Ward, levels = rev(ward_dead$Ward))
+kano_avg <- 2.65
+
+ggplot(ward_dead, aes(x = Ward, y = Rate, fill = Flag)) +
+  geom_col(width = 0.65) +
+  geom_hline(yintercept = kano_avg, linetype = "dashed", colour = "#555") +
+  annotate("text", x = 2, y = kano_avg, label = paste0("Kano average: ", kano_avg, "%"),
+           vjust = -0.6, hjust = 0, size = 3.3, colour = "#555") +
+  scale_fill_manual(values = c("Mekiya" = "#e74c3c", "Other" = "#b0b0b0"), guide = "none") +
+  scale_y_continuous(labels = function(x) paste0(x, "%"), expand = expansion(mult = c(0, 0.08))) +
+  coord_flip() +
+  labs(title = "This pattern would be visible in routine data review",
+       subtitle = "It was only found in retrospective analysis",
+       x = NULL, y = "Deceased-at-tracing rate") +
+  theme_minimal(base_size = 12.5) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    plot.title         = element_text(face = "bold", size = 13),
+    plot.subtitle      = element_text(color = "#666", size = 10.5)
+  )
+```
+
+Mekiya ward (Gabasawa LGA) sits at 3.7 times the Kano-wide average, the same figure cited above. A handful of "Garindanga" spelling variants also appear in the ward list. This is a second, smaller data quality issue (the same ward split across several free-text spellings), not the Mekiya error, and is a candidate for the standardised-ward-list check in Table 5A.
+
+```{r fig5b-panel1, fig.cap="Figure 5B (top): Highest single-day visit volumes, Katsina facilities, top 40 facility-days by rank. Source: DATHARM, 2026b.", fig.width=8, fig.height=4}
+
+fv_days <- data.frame(
+  rank = 1:40,
+  n    = c(184,133,124,115,107,99,97,88,87,87,86,84,84,78,77,77,70,69,69,68,
+           64,64,63,63,63,61,61,61,60,59,58,57,56,55,55,54,53,52,51,50)
+)
+fv_days$tier <- cut(fv_days$n, breaks = c(0,30,50,100,Inf),
+                     labels = c("30-49","50-99","100-199","200+"))
+
+ggplot(fv_days, aes(x = rank, y = n, colour = tier)) +
+  geom_point(size = 2.4) +
+  scale_colour_manual(values = c("30-49" = "#5dade2", "50-99" = "#f0b429",
+                                  "100-199" = "#c0392b", "200+" = "#7b241c"), guide = "none") +
+  labs(title = "Highest single-day volumes", subtitle = "Katsina facilities",
+       x = "Rank", y = "Visits / day") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(), plot.title = element_text(face = "bold", size = 12.5))
+```
+```{r fig5b-panel2, fig.cap="Figure 5B (bottom): Distribution of all facility-days by visit-count band, Katsina, n = 3,184 facility-days. Dashed line marks the 95th percentile of the observed distribution. Source: DATHARM, 2026b.", fig.width=8, fig.height=4.5}
+
+band_dist <- data.frame(
+  Band = c("1-4","5-9","10-19","20-29","30-49","50-99","100-199","200+"),
+  N    = c(1552,733,552,193,106,43,5,0),
+  Pct  = c(48.7,23.0,17.3,6.1,3.3,1.4,0.2,0.0)
+)
+band_dist$Band <- factor(band_dist$Band, levels = band_dist$Band)
+
+ggplot(band_dist, aes(x = Band, y = N)) +
+  geom_col(fill = "#5dade2", width = 0.65) +
+  geom_text(aes(label = paste0(N, " (", Pct, "%)")), hjust = -0.05, size = 3.1) +
+  geom_vline(xintercept = 6.5, linetype = "dashed", colour = "#c0392b") +
+  annotate("text", x = 6.5, y = max(band_dist$N)*0.55, label = "95th pctile: 29/day",
+           angle = 90, vjust = -0.6, size = 3, colour = "#c0392b") +
+  scale_y_continuous(limits = c(0, max(band_dist$N)*1.25), expand = c(0,0)) +
+  coord_flip() +
+  labs(title = "Distribution of all facility-days", subtitle = "n = 3,184 facility-days total",
+       x = NULL, y = "Facility-days") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
+        plot.title = element_text(face = "bold", size = 12.5))
+```
+
+Katsina facility-visits data covers 3,184 facility-days. Nearly half (48.7%) record 1-4 visits, but 48 facility-days (1.5%) record 50 or more, and one facility logged 184 visits in a single day, four times its own next-highest day. A 2016 assessment of Nigeria's primary health care system found average productivity of 2.8 outpatient visits per health worker per day (Kress, Su and Wang, 2016); a facility costing study covering Kano specifically found similarly constrained staffing levels (Ogundeji et al., 2023). Neither source directly yields a single day-level ceiling, since visit counts depend on staffing on the day, but both support treating volumes in the hundreds as implausible for a typical 2-4 staff facility rather than as routine activity.
+
+<div class="finding-box">
+Rather than adopt an unverified fixed threshold, DATHARM should define its own facility-day ceiling empirically, for example a rule flagging any facility-day above the 95th (29 visits) or 99th (56 visits) percentile of its own historical distribution for review, informed by the staffing-productivity literature above rather than derived from it directly. A routine check of this kind would have caught the volumes shown here without waiting for a retrospective audit.
+</div>
+
+---
+
+# 6. Collect a small number of additional variables at enrolment
+
+<div class="rec-box">
+**The change:** Add a small set of fields to the enrolment form that CHWs can complete during an existing household visit. These variables are consistently identified in the literature as among the strongest predictors of zero-dose status, and none are currently in MCHTrack.
+</div>
+
+## The gap
+
+MCHTrack currently collects a child's age, sex, location, and distance to the nearest facility. These are all useful. But across decades of research on why children go unvaccinated in comparable settings, several other factors consistently appear as strong independent predictors and none are in the current data (Farrenkopf et al., 2023; Bolarinwa et al., 2025).
+
+```{r table6a}
+table6a <- data.frame(
+  Variable = c("Maternal education",
+               "Children under 5 in household",
+               "Who decided to vaccinate",
+               "Prior refusal at this household",
+               "Roof material (wealth proxy)"),
+  Why = c("Strongest predictor of full immunisation across sub-Saharan Africa (Farrenkopf et al., 2023)",
+          "Later-born children are consistently less likely to be fully vaccinated (Farrenkopf et al., 2023)",
+          "Gender-skewed household decision-making is a documented barrier in Kano specifically (Bolarinwa et al., 2025)",
+          "A household that has refused before needs a different follow-up approach than one not yet reached",
+          "Predicts access barriers independent of distance; standard proxy in national DHS surveys"),
+  How = c("\"Did the child's mother attend school?\" (yes / no / unknown)",
+          "Count field: \"How many children under 5 live here?\"",
+          "Dropdown: mother / father / grandparent / other caregiver",
+          "Flag on tracing record: \"Was vaccination declined at this contact?\" (yes / no)",
+          "Dropdown: thatch / zinc / concrete / other")
+)
+
+kable(table6a, col.names = c("Variable", "Why it matters", "How to collect it (one question)"),
+      caption = "Table 6A: Candidate enrolment variables, their evidence base, and a single-question collection method for each.") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = TRUE, font_size = 13)
+```
+
+## The tradeoff
+
+Every additional field is time a CHW spends recording rather than visiting households. This is a real constraint. The five variables above were chosen because each can be answered with a single question during a conversation that is already happening, requires no specialist training, and uses formats already standard in national and international health surveys. The collective additional time per household is estimated at under two minutes.
+
+This tradeoff should be decided by DATHARM's programme staff in consultation with CHWs. If workload is already at capacity, any additions should be piloted in a small number of wards before being rolled out across Jigawa.
+
+<div class="evidence-box">
+An analysis of zero-dose predictors across 82 low- and middle-income countries found that maternal education, household wealth, and birth order together explained a substantial share of the variation in vaccination uptake that distance and geography alone did not account for (Farrenkopf et al., 2023). Qualitative research in Kano communities found that gender-skewed household decision-making and prior negative experiences with health workers were named by caregivers as major barriers, factors CHWs currently have no systematic way to flag for follow-up (Bolarinwa et al., 2025).
+
+<div class="caution">⚠️ The Farrenkopf et al. (2023) study reflects average patterns across 82 countries with diverse contexts. The strength of any individual predictor in Jigawa specifically will depend on local conditions and can only be confirmed through analysis of Jigawa data once collected. These variables are worth collecting because the literature consistently suggests they matter, not because their effect sizes in other settings can be assumed to transfer directly.</div>
+</div>
+
+---
+
+## A note on external evidence
+
+Several recommendations above reference findings from comparable programmes or published research. These are cited to establish that the problems identified in MCHTrack are not unique to DATHARM, and that solutions have been tested elsewhere. Each comparison includes an explicit caveat about the limits of direct comparison.
+
+The most important evidence in this document is not external. It is what the MCHTrack data itself showed when examined systematically. That evidence is DATHARM's own, and the recommendations above are grounded in it first.
+
+---
+
+## References
+
+<div class="bibliography">
+
+<p>Adeyanju, G.C., Engel, N., Muhr, L. and Beiersmann, C. (2021) 'Barriers to and facilitators of routine childhood immunization in Nigeria: a systematic review of qualitative literature', <em>BMC Public Health</em>, 21, p. 2034.</p>
+
+<p>Bolarinwa, O.A., Salaudeen, G.A., Lar, L., Alhaffar, M., Abdelmagid, N., McGowan, C.R., Adesoro, O., Valentine, P., Ahmed, T., Clarke, A., Makunja, S. and Akande, T.M. (2025) 'Barriers and enablers to childhood immunization in high zero-dose burden communities in Kano and Lagos states, Nigeria', <em>Vaccine</em>, 64, p. 127754.</p>
+
+<p>DATHARM (2026a) <em>MCHTrack Linelisted Dataset, Kano State</em>. [Unpublished programme data]. Abuja: DATHARM.</p>
+
+<p>DATHARM (2026b) <em>MCHTrack Facility Visits Dataset, Kano and Katsina States</em>. [Unpublished programme data]. Abuja: DATHARM.</p>
+
+<p>DATHARM (2026c) <em>MCHTrack Defaulter Tracing Dataset, Kano and Katsina States</em>. [Unpublished programme data]. Abuja: DATHARM.</p>
+
+<p>DATHARM (2026d) <em>MCHTrack Identified Zero-Dose Dataset, Kano and Katsina States</em>. [Unpublished programme data]. Abuja: DATHARM.</p>
+
+<p>Farrenkopf, B.A., Zhou, X., Shet, A., Olayinka, F., Carr, K., Patenaude, B., Chido-Amajuoyi, O.G. and Wonodi, C. (2023) 'Understanding household-level risk factors for zero dose immunization in 82 low- and middle-income countries', <em>PLOS One</em>, 18(12), e0287459.</p>
+
+<p>Kress, D.H., Su, Y. and Wang, H. (2016) 'Assessment of primary health care system performance in Nigeria: using the primary health care performance indicator conceptual framework', <em>Health Systems &amp; Reform</em>, 2(4), pp. 302-318.</p>
+
+<p>MOV assessment, Ondo State (2019) Missed opportunities for vaccination assessment, Ondo State, Nigeria. [Unpublished assessment report].</p>
+
+<p>Ogundeji, Y., Abubakar, H., Ezeh, U., Hussaini, T., Kamau, N., Love, E., Munoz, R., Ongboche, P., Opuni, M., Walker, D.G. and Gilmartin, C. (2023) 'An assessment of primary health care costs and resource requirements in Kaduna and Kano, Nigeria', <em>Frontiers in Public Health</em>, 11, article 1226145.</p>
+
+<p>Siddiqi, D.A., Iftikhar, S., Anfossi, C.M., Siddique, M., Shah, M.T., Dharma, V.K., Mehmood, M., Setayesh, H., Sodhar, I.A., Malik, F.R. and Chandir, S. (2025) 'Assessing the impact of heat waves on childhood immunization coverage in Sindh, Pakistan: insights from 132.4 million doses recorded in the provincial electronic immunization registry (2018--2024)', <em>Vaccine</em>, 61, p. 127424.</p>
+
+</div>
+
+---
+
+*Prepared July 2026. Data source: MCHTrack Kano and Katsina exports, August 2024--March 2026. Contact: suntiparp.somsak@trinity.ox.ac.uk and ahmed.ismail@chch.ox.ac.uk*
