@@ -4,6 +4,9 @@
 #  Exposure: Extreme heat days (UTCI >= 38°C)          #
 #  Sites: Ungogo & Gabasawa LGAs                       #
 #  Created: June 2026                                  #
+#  Last Updated 13/7/2026 — added negative binomial    #
+#  comparison per Aisha's c155 (NB may be the better   #
+#  primary spec, not just a robustness check)          #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -219,6 +222,76 @@ modelsummary(
 )
 
 cat("\nTable saved to:", file.path(out_dir, "06_regression_daily.docx"), "\n")
+
+#----------------------------------------------------------------------------
+
+###################################
+# 5b. Negative binomial comparison#
+###################################
+
+# ADDED 13/7/2026 — c155 (Aisha): argues negative binomial (or a zero-
+# inflated Poisson) is likely the BETTER primary choice for this outcome,
+# not just a robustness check. Log-transformed OLS assumes a log-normal
+# relationship that count data does not follow well, the "+1" adjustment
+# makes coefficients hard to interpret cleanly, and OLS residual
+# assumptions are difficult to satisfy for counts. The overdispersion this
+# argument rests on is the same overdispersion already confirmed in
+# Figure 2.3 (V/M = 62.4 Gabasawa, V/M = 97.8 Ungogo) — that check used
+# this exact panel, so no separate diagnostic is needed here.
+#
+# D3 is named the primary OLS spec above, so D3_nb is the direct
+# negative-binomial counterpart: same FE structure, same clustering,
+# outcome switched from log(n_visits + 1) to raw n_visits (fenegbin
+# models the count directly, no log-transform needed).
+
+d3_nb <- fenegbin(n_visits ~ extreme_heat_38 | lga_clean + dow_num + ym_factor,
+                  data    = panel,
+                  cluster = ~lga_clean)
+
+# D4_nb: continuous exposure counterpart, same logic as D3_nb vs D3
+d4_nb <- fenegbin(n_visits ~ utci_dt_c | lga_clean + dow_num + ym_factor,
+                  data    = panel,
+                  cluster = ~lga_clean)
+
+# Small helper for the significance check below — not defined elsewhere in
+# this script (09_visualization_markdown.Rmd has its own copy in its setup
+# chunk; duplicated here so this script runs standalone).
+star2 <- function(coef, se) {
+  t <- abs(coef / se)
+  if (t > 2.576) "***" else if (t > 1.96) "**" else if (t > 1.645) "*" else "n.s."
+}
+
+cat("=== NEGATIVE BINOMIAL COMPARISON — HEAT ===\n\n")
+
+etable(d3, d3_nb, d4, d4_nb,
+       title    = "OLS (log-visits) vs negative binomial — heat exposure",
+       digits   = 4,
+       se.below = TRUE)
+
+modelsummary(
+  list(
+    "D3: OLS — binary heat"           = d3,
+    "D3_nb: NB — binary heat"         = d3_nb,
+    "D4: OLS — continuous UTCI"       = d4,
+    "D4_nb: NB — continuous UTCI"     = d4_nb
+  ),
+  stars   = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  gof_map = c("nobs", "r.squared"),
+  title   = "Heat stress — OLS vs negative binomial, Kano daily panel",
+  output  = file.path(out_dir, "06_regression_nb_comparison.txt")
+)
+
+cat("\nTable saved to:", file.path(out_dir, "06_regression_nb_comparison.txt"), "\n")
+cat("\nDirection/significance check (should agree if OLS retention is justified):\n")
+cat("  D3 significant:   ", star2(coef(d3)["extreme_heat_38"],   se(d3)["extreme_heat_38"]),   "\n")
+cat("  D3_nb significant:", star2(coef(d3_nb)["extreme_heat_38"],se(d3_nb)["extreme_heat_38"]),"\n")
+cat("  D4 significant:   ", star2(coef(d4)["utci_dt_c"],         se(d4)["utci_dt_c"]),          "\n")
+cat("  D4_nb significant:", star2(coef(d4_nb)["utci_dt_c"],      se(d4_nb)["utci_dt_c"]),       "\n\n")
+cat("NOTE: this table answers whether OLS and NB agree for THIS variable.\n")
+cat("It does not by itself settle whether OLS or NB should be the primary\n")
+cat("spec across all three weather variables — that is a document-wide\n")
+cat("methods decision (c155) that should be made once with Prabin and\n")
+cat("applied consistently to heat, precipitation and NDVI together.\n\n")
 
 #----------------------------------------------------------------------------
 
@@ -699,3 +772,5 @@ cat("Facility panel and coefficients saved.\n")
 cat("\n--- Section 8 complete ---\n")
 cat("Next step: review heterogeneity summary above and coefficient plot\n")
 cat("before deciding whether MODIS LST extraction is warranted\n")
+
+#--------------------------(END)------------------------------#

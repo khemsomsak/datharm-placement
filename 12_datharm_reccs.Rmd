@@ -1,16 +1,19 @@
 ---
-title: "MCHTrack: Six Changes That Matter Most"
-subtitle: "Internal Datharm Data Audit Findings and Recommendations"
+title: 'MCHTrack: Six Changes That Matter Most'
 author: "Suntiparp Somsak · in collaboration with Dr. Ahmed Ismail"
 date: "July 2026"
 output:
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
   html_document:
     theme: flatly
-    toc: true
+    toc: yes
     toc_float:
-      collapsed: false
+      collapsed: no
     toc_depth: 2
-    number_sections: false
+    number_sections: no
+subtitle: Internal Datharm Data Audit Findings and Recommendations
 ---
 
 ```{r setup, include=FALSE}
