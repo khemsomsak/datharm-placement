@@ -1,13 +1,19 @@
 ########################################################
-#  09_Data Quality Investigations                        #
-#  Produces the analysis both the thesis visualization   #
-#  script and the DATHARM audit document need, so        #
-#  neither one hand-types a data-quality number again.   #
-#  Runs immediately after 01_mchtrack_import.R and       #
-#  before any modelling script, since two findings here  #
-#  (duplicate rows, unattributed LGA) affect whether     #
-#  downstream regressions are even valid.                #
-#  Created 13/7/2026                                     #
+#  Data Quality Investigations                         #
+#  Produces the analysis both the thesis visualization  #
+#  script and the DATHARM audit document need, so       #
+#  neither one hand-types a data-quality number again.  #
+#  Numbered 09 (after 08_ndvi_analysis.R, before          #
+#  10_visualizations.R) rather than inserted early in     #
+#  the sequence -- only reads 01_mchtrack_import.R's      #
+#  outputs directly, so its position in the numbering     #
+#  does not create an execution-order dependency on       #
+#  02-08. Its deduplicated exports (09_linelisted_deduped, #
+#  09_facility_visits_deduped) are NOT yet consumed by     #
+#  02-08, which still read 01's un-deduplicated tables --  #
+#  see the note near those exports below.                  #
+#  Created 13/7/2026, renamed from 02_data_investigations.R #
+#  same day.                                                #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -108,43 +114,33 @@ dup_summary_all <- bind_rows(
 # in. Which sizes count as "rare" (i.e. get pooled) is data-driven here:
 # any size representing fewer than 1% of duplicated rows within its table,
 # rather than a hand-picked list, so this doesn't need updating by hand if
-# the underlying data changes.
+# the underlying data changes. STATE IS KEPT (not collapsed) so a
+# downstream visualization script can build either an all-states chart
+# (thesis) or a Katsina-only chart (DATHARM audit fig1a, which never
+# covered Kano since Kano had no duplicates) from the same export.
+# NOTE: no plot is built or saved here — this script produces numbers
+# only. All chart-building lives in 10_visualizations.R, matching the
+# same compute/presentation split already applied to the thesis's 09/10
+# scripts and now extended to the DATHARM audit doc's inputs too.
 build_dist_for_plot <- function(dist) {
   dist %>%
     group_by(table) %>%
     mutate(pct_of_dup_rows = rows_from_duplication / sum(rows_from_duplication)) %>%
     ungroup() %>%
     mutate(set_size_label = if_else(pct_of_dup_rows < 0.01, "Other", as.character(set_size))) %>%
-    group_by(table, set_size_label) %>%
+    group_by(table, state, set_size_label) %>%
     summarise(rows_from_duplication = sum(rows_from_duplication), .groups = "drop")
 }
 
 dup_dist_plot <- bind_rows(dup_ll$distribution, dup_fv$distribution) %>%
   build_dist_for_plot()
 
-fig1a_equivalent <- ggplot(dup_dist_plot %>% filter(set_size_label != "Other" | rows_from_duplication > 0),
-                           aes(x = fct_reorder(set_size_label, as.numeric(suppressWarnings(as.character(set_size_label))), .na_rm = FALSE),
-                               y = rows_from_duplication, fill = table)) +
-  geom_col(position = position_dodge(width = 0.7), width = 0.62) +
-  scale_fill_manual(values = c("Linelisted (children enrolled)" = "#3498db",
-                               "Facility visits (vaccination records)" = "#e74c3c")) +
-  labs(title = "How many times is the same record being copied via sync?",
-       subtitle = "Computed live from 01_mchtrack_import.R outputs — all states shown, not Katsina-only by assumption",
-       x = "Number of times a record appears (duplicate set size)",
-       y = "Rows created by duplication", fill = NULL) +
-  theme_minimal(base_size = 13) +
-  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
-        plot.title = element_text(face = "bold", size = 13),
-        plot.subtitle = element_text(color = "#666", size = 10), legend.position = "top")
-
-ggsave(file.path(out_dir, "09_fig_dup_distribution.png"), fig1a_equivalent, width = 8.2, height = 4.4, dpi = 300)
-
 # Sample of actual duplicate rows, for the "here's what one looks like" table
 dup_sample_ll <- dup_ll$keyed %>% filter(set_size > 1) %>% arrange(pseudo_id) %>% head(6)
 dup_sample_fv <- dup_fv$keyed %>% filter(set_size > 1) %>% arrange(patient_id, visit_date) %>% head(6)
 
 #--- Deduplicated exports — the actual fix, not just the report -------------
-# IMPORTANT: renumbered 04_regression.R (formerly 03_regression.R), and any
+# IMPORTANT: 03_regression.R, and any
 # other script currently reading 01_linelisted_clean.rds /
 # 01_facility_visits_clean.rds directly, should be updated to read these
 # deduplicated versions instead, or Katsina-inclusive results (RQ1, RQ2)
@@ -211,7 +207,7 @@ saveRDS(null_lga_summary, file.path(out_dir, "09_null_lga_summary.rds"))
 # L2 Strict:     yes_ok only
 # L3 Matched:    yes_ok AND a facility_visits record exists for that
 #                patient_id at any time (not lag-restricted, unlike
-#                04_regression.R's days_since_visit construction — this is
+#                03_regression.R's days_since_visit construction — this is
 #                deliberately looser, matching the audit's own definition)
 # L4 Verified:   L3, and that matched facility_visits record names a
 #                vaccine (vaccines_administered not blank)
@@ -272,6 +268,19 @@ cat("--- Off-network care share by state ---\n"); print(offnetwork_share); cat("
 
 saveRDS(offnetwork_share, file.path(out_dir, "09_offnetwork_share_by_state.rds"))
 
+# Real sample of off-network-care rows, both states, for a table2a-style
+# illustration. vaccine_on_card is not a field defaulter_tracing collects
+# at all (that gap is the whole point of this recommendation) — included
+# here as an explicit NOT RECORDED column rather than omitted, so the
+# table visibly shows the missing field instead of just not mentioning it.
+offnetwork_sample <- data_dt %>%
+  filter(tracing_outcome == "yes_off_network_care") %>%
+  mutate(vaccine_on_card = "NOT RECORDED") %>%
+  select(patient_id, state, tracing_outcome, any_of("tracing_method"), any_of("tracing_date"), vaccine_on_card) %>%
+  slice_sample(n = min(8, nrow(.)))
+
+saveRDS(offnetwork_sample, file.path(out_dir, "09_offnetwork_sample.rds"))
+
 #----------------------------------------------------------------------------
 
 ##########################################################
@@ -291,40 +300,67 @@ saveRDS(offnetwork_share, file.path(out_dir, "09_offnetwork_share_by_state.rds")
 # reproduction of the original table3b until that's confirmed.
 
 if ("visit_date" %in% names(data_zd)) {
-  zd_resolved <- data_zd %>%
-    filter(tracing_outcome %in% c("yes_ok", "yes_off_network_care"), !is.na(visit_date))
   
-  zd_recon <- zd_resolved %>%
-    left_join(
-      data_fv %>% select(patient_id_fv = patient_id, visit_date_fv = visit_date),
-      by = character(0)
-    )
-  # Proper non-cartesian join: check per-child whether ANY facility_visits
-  # row falls within 90 days after the zd record's own visit_date.
-  zd_check <- zd_resolved %>%
-    rowwise() %>%
-    mutate(
-      has_visit_within_90d = any(
-        data_fv$patient_id == id &
-          data_fv$visit_date >= visit_date &
-          data_fv$visit_date <= visit_date + days(90),
-        na.rm = TRUE
+  # data_zd's child-identifier column name hasn't been confirmed directly
+  # against 01_mchtrack_import.R's data_zd_clean select() in this session.
+  # facility_visits and defaulter_tracing both key on patient_id, but the
+  # DATHARM audit's own table3b used "child_id" as its column label for
+  # this exact table, so this checks both rather than guessing.
+  zd_id_col <- if ("patient_id" %in% names(data_zd)) "patient_id" else
+    if ("child_id" %in% names(data_zd)) "child_id" else NA_character_
+  
+  if (is.na(zd_id_col)) {
+    cat("SKIPPED: ZD reconciliation — no patient_id or child_id column found",
+        "on identified_zd. Check the real column name and update zd_id_col.\n\n")
+  } else {
+    
+    zd_resolved <- data_zd %>%
+      filter(tracing_outcome %in% c("yes_ok", "yes_off_network_care"), !is.na(visit_date)) %>%
+      rename(zd_child_id = all_of(zd_id_col))
+    
+    # Non-cartesian join: check per-child whether ANY facility_visits row
+    # falls within 90 days after the zd record's own visit_date (the proxy
+    # resolution date — see caveat above), and capture the health centre
+    # name from the zd record itself for the sample table below.
+    zd_check <- zd_resolved %>%
+      rowwise() %>%
+      mutate(
+        has_visit_within_90d = any(
+          data_fv$patient_id == zd_child_id &
+            data_fv$visit_date >= visit_date &
+            data_fv$visit_date <= visit_date + days(90),
+          na.rm = TRUE
+        )
+      ) %>%
+      ungroup()
+    
+    zd_reconciliation <- zd_check %>%
+      group_by(state) %>%
+      summarise(
+        n_resolved = n(),
+        n_no_matching_visit = sum(!has_visit_within_90d),
+        pct_no_matching_visit = round(mean(!has_visit_within_90d) * 100, 1),
+        .groups = "drop"
       )
-    ) %>%
-    ungroup()
-  
-  zd_reconciliation <- zd_check %>%
-    group_by(state) %>%
-    summarise(
-      n_resolved = n(),
-      n_no_matching_visit = sum(!has_visit_within_90d),
-      pct_no_matching_visit = round(mean(!has_visit_within_90d) * 100, 1),
-      .groups = "drop"
-    )
-  
-  cat("--- ZD reconciliation (PROXY — see caveat above) ---\n")
-  print(zd_reconciliation); cat("\n")
-  saveRDS(zd_reconciliation, file.path(out_dir, "09_zd_reconciliation_proxy.rds"))
+    
+    cat("--- ZD reconciliation (PROXY — see caveat above) ---\n")
+    print(zd_reconciliation); cat("\n")
+    saveRDS(zd_reconciliation, file.path(out_dir, "09_zd_reconciliation_proxy.rds"))
+    
+    # Sample of unresolved-match rows for a table3b-style illustration.
+    # health_center/facility_ward field name also unconfirmed against the
+    # real data_zd schema — grabs whichever of the two exists.
+    hc_col <- if ("health_center_id" %in% names(zd_check)) "health_center_id" else
+      if ("facility_ward" %in% names(zd_check)) "facility_ward" else NA_character_
+    
+    zd_sample <- zd_check %>%
+      filter(!has_visit_within_90d) %>%
+      { if (!is.na(hc_col)) rename(., health_centre = all_of(hc_col)) else mutate(., health_centre = NA_character_) } %>%
+      select(zd_child_id, state, any_of("health_centre"), tracing_outcome, visit_date, has_visit_within_90d) %>%
+      head(8)
+    
+    saveRDS(zd_sample, file.path(out_dir, "09_zd_reconciliation_sample.rds"))
+  }
 } else {
   cat("SKIPPED: ZD reconciliation — identified_zd has no visit_date field",
       "to use as a resolution-date proxy. Table3b needs the expanded",
@@ -464,11 +500,12 @@ cat("  09_dedup_set_size_distribution.rds\n")
 cat("  09_dedup_sample_rows.rds\n")
 cat("  09_linelisted_deduped.rds          <- downstream scripts should switch to this\n")
 cat("  09_facility_visits_deduped.rds     <- downstream scripts should switch to this\n")
-cat("  09_fig_dup_distribution.png\n")
 cat("  09_null_lga_summary.rds\n")
 cat("  09_recovery_ladder.rds\n")
 cat("  09_offnetwork_share_by_state.rds\n")
+cat("  09_offnetwork_sample.rds\n")
 cat("  09_zd_reconciliation_proxy.rds     <- PROXY, see Section 5 caveat\n")
+cat("  09_zd_reconciliation_sample.rds    <- PROXY, see Section 5 caveat\n")
 cat("  09_ward_deceased_rate.rds          <- verify 'deceased_pattern' first, see Section 6\n")
 cat("  09_facility_day_volume.rds\n")
 cat("  (Rimi backfill and ward-spelling checks print to console only,\n")
@@ -480,7 +517,7 @@ cat("1. Confirm 01_identifiedzd_clean.rds / 01_defaultertracing_clean.rds are\n"
 cat("   the actual saved filenames from 01_mchtrack_import.R -- inferred from\n")
 cat("   its naming pattern (01_linelisted_clean.rds, 01_facility_visits_clean.rds)\n")
 cat("   but not confirmed directly against its Export section in this session.\n")
-cat("2. Decide whether 04_regression.R (renumbered) should be updated to read\n")
+cat("2. Decide whether 03_regression.R should be updated to read\n")
 cat("   09_linelisted_deduped.rds / 09_facility_visits_deduped.rds instead of\n")
 cat("   01's originals -- as written today it still reads the un-deduplicated\n")
 cat("   tables, which undercuts the fix this script produces.\n")
