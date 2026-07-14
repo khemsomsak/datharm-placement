@@ -1,8 +1,7 @@
 ########################################################
-#  Figures and Tables                                  #
-#     Build Script (thesis + DATHARM)                  #
-#  Created on: 13/07/2026                              #
-#  Updated on: 13/07/2026                              #
+#  Figures and Tables — Build Script (thesis + DATHARM) #
+#  Created on: 14/07/2026                               #
+#  Updated on: 14/07/2026                               #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -579,11 +578,18 @@ wr_path <- file.path(resid_dir, "04_ward_residuals_classified.csv")
 if (require_file(wr_path, "Figure 3.4 ward residuals")) {
   wr <- read_csv(wr_path, show_col_types = FALSE)
   dup_lgas <- c("Funtua LGA", "Mani LGA", "Safana LGA", "Batagarawa LGA", "Katsina LGA", "Baure LGA")
+  # fct_reorder() is used nowhere below: it errors ("idx must contain one
+  # integer for each level of f") whenever two rows produce an identical
+  # ward_lab string, which a residuals file built on data with any
+  # remaining duplicate/near-duplicate rows can easily trigger. arrange()
+  # + factor(levels = unique(...)) sorts the same way but never depends on
+  # every label being unique to a single row.
   wr_top <- wr %>% slice_max(residual, n = 12) %>%
     mutate(ward_lab = paste0(facility_ward, "  (", str_remove(lga_name, " LGA"), ", ", str_sub(state, 1, 3), ")"),
-           ward_lab = fct_reorder(ward_lab, residual),
            provisional = state == "Katsina" & lga_name %in% dup_lgas,
-           flag_lab = if_else(provisional, "Katsina, duplication-affected list", "Not flagged"))
+           flag_lab = if_else(provisional, "Katsina, duplication-affected list", "Not flagged")) %>%
+    arrange(residual) %>%
+    mutate(ward_lab = factor(ward_lab, levels = unique(ward_lab)))
   
   fig_3_4 <- ggplot(wr_top, aes(x = residual, y = ward_lab)) +
     geom_segment(aes(x = 0, xend = residual, y = ward_lab, yend = ward_lab), colour = "#ddd", linewidth = 0.5) +
@@ -1154,10 +1160,21 @@ artifacts_datharm$table5a <- table5a_datharm
 ward_dead_path <- file.path(inv_dir, "09_ward_deceased_rate.rds")
 if (require_file(ward_dead_path, "Fig5A ward deceased rate")) {
   ward_dead_obj <- readRDS(ward_dead_path)
+  # Same fct_reorder() fragility as Figure 3.4 above — replaced with
+  # arrange() + factor(levels = unique(...)) so a duplicate "ward (LGA)"
+  # label (e.g. two wards that clean to the same name) can't crash this
+  # chunk. If duplicates do exist here, that's itself worth flagging as a
+  # data-quality finding, not just working around silently.
   ward_dead_datharm <- ward_dead_obj$by_ward %>%
     mutate(ward_lab = paste0(facility_ward, " (", lga_name, ")"),
-           ward_lab = fct_reorder(ward_lab, deceased_rate_pct),
-           flag = if_else(row_number() == which.max(deceased_rate_pct), "Highest", "Other"))
+           flag = if_else(row_number() == which.max(deceased_rate_pct), "Highest", "Other")) %>%
+    arrange(deceased_rate_pct) %>%
+    mutate(ward_lab = factor(ward_lab, levels = unique(ward_lab)))
+  if (anyDuplicated(paste0(ward_dead_obj$by_ward$facility_ward, "|", ward_dead_obj$by_ward$lga_name)) > 0) {
+    warning("Fig5A: duplicate ward+LGA combinations found in 09_ward_deceased_rate.rds — ",
+            "two rows share the same label. Check ward_outcome_rates in ",
+            "09_data_investigations.R Section 6 for a lingering spelling/case variant.", call. = FALSE)
+  }
   kano_avg_dead <- ward_dead_obj$kano_avg
   
   fig5a_datharm <- ggplot(ward_dead_datharm, aes(x = ward_lab, y = deceased_rate_pct, fill = flag)) +
