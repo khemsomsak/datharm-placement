@@ -22,10 +22,6 @@ out_dir      <- file.path(home, "03_output/02_chirps_analysis")
 dir.create(import_dir, showWarnings = FALSE, recursive = TRUE)
 dir.create(out_dir,    showWarnings = FALSE, recursive = TRUE)
 
-#For working with rasters
-install.packages("chirps")
-install.packages("sf")
-install.packages("terra")
 
 library(sf)
 library(terra)

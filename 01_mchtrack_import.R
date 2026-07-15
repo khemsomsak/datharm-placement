@@ -139,6 +139,39 @@ clean_ward_name <- function(x) {
     str_trim()
 }
 
+#Capture duplicate set-size distribution BEFORE dedup collapses it ----
+# Feeds thesis Figure 2.2 and DATHARM audit fig1a/table1a. Captured here,
+# not in 09_data_investigations.R, because by the time 09 runs it only
+# ever sees this table's ALREADY-deduplicated form — the duplication
+# this figure illustrates no longer exists downstream to detect. Same
+# set-size logic used for the verification check in 09's Section 1,
+# applied here pre-distinct() instead of post-distinct().
+capture_dup_distribution <- function(df, key_cols, table_label) {
+  df_keyed <- df %>%
+    filter(if_all(all_of(key_cols), ~ !is.na(.) & . != ""))
+  set_sizes <- df_keyed %>%
+    count(across(all_of(key_cols)), name = "set_size")
+  df_keyed %>%
+    left_join(set_sizes, by = key_cols) %>%
+    filter(set_size > 1) %>%
+    distinct(across(all_of(key_cols)), state, set_size) %>%
+    count(state, set_size, name = "n_sets") %>%
+    mutate(rows_from_duplication = n_sets * set_size, table = table_label)
+}
+
+#Pool rare set sizes into "Other" for plotting — same treatment as the
+#original DATHARM audit chart, data-driven (<1% of duplicated rows
+#within its own table) rather than a hand-picked list ----
+build_dist_for_plot <- function(dist) {
+  dist %>%
+    group_by(table) %>%
+    mutate(pct_of_dup_rows = rows_from_duplication / sum(rows_from_duplication)) %>%
+    ungroup() %>%
+    mutate(set_size_label = if_else(pct_of_dup_rows < 0.01, "Other", as.character(set_size))) %>%
+    group_by(table, state, set_size_label) %>%
+    summarise(rows_from_duplication = sum(rows_from_duplication), .groups = "drop")
+}
+
 # 2. Clean and stack facility_visits -----------------------------------------------
 
 #Stack kano and katsina ----
@@ -181,6 +214,11 @@ data_fv_clean <- data_fv_raw %>%
 # of removed rows (09_dedup_sample_rows.rds from 09_data_investigations.R)
 # before fully trusting this if that assumption seems wrong.
 n_fv_before_dedup <- nrow(data_fv_clean)
+dist_fv <- capture_dup_distribution(
+  data_fv_clean,
+  c("patient_id", "visit_date", "health_center_id", "vaccines_administered"),
+  "Facility visits (vaccination records)"
+)
 data_fv_clean <- data_fv_clean %>%
   distinct(patient_id, visit_date, health_center_id, vaccines_administered, .keep_all = TRUE)
 n_fv_dedup_removed <- n_fv_before_dedup - nrow(data_fv_clean)
@@ -247,6 +285,7 @@ mutate(
 # a duplicate registration record is a duplicate regardless of which row
 # type it is. Same re-entry-vs-correction caveat as facility_visits above.
 n_ll_before_dedup <- nrow(data_ll_clean)
+dist_ll <- capture_dup_distribution(data_ll_clean, "pseudo_id", "Linelisted (children enrolled)")
 data_ll_clean <- data_ll_clean %>%
   distinct(pseudo_id, .keep_all = TRUE)
 n_ll_dedup_removed <- n_ll_before_dedup - nrow(data_ll_clean)
@@ -322,6 +361,7 @@ data_zd_clean <- data_zd_raw %>%
 # Key: id (this table's own row identifier). Never checked for duplicates
 # before this update — flagged, not previously verified either way.
 n_zd_before_dedup <- nrow(data_zd_clean)
+dist_zd <- capture_dup_distribution(data_zd_clean, "id", "Identified zero-dose")
 data_zd_clean <- data_zd_clean %>%
   distinct(id, .keep_all = TRUE)
 n_zd_dedup_removed <- n_zd_before_dedup - nrow(data_zd_clean)
@@ -374,6 +414,7 @@ data_dt_clean <- data_dt_raw %>%
 # Key: id (this table's own row identifier). Never checked for duplicates
 # before this update — flagged, not previously verified either way.
 n_dt_before_dedup <- nrow(data_dt_clean)
+dist_dt <- capture_dup_distribution(data_dt_clean, "id", "Defaulter tracing")
 data_dt_clean <- data_dt_clean %>%
   distinct(id, .keep_all = TRUE)
 n_dt_dedup_removed <- n_dt_before_dedup - nrow(data_dt_clean)
@@ -400,6 +441,15 @@ dedup_summary_import <- tibble::tribble(
 cat("--- Deduplication summary (all four tables) ---\n")
 print(dedup_summary_import)
 cat("\n")
+
+#Duplicate set-size distribution (pre-dedup snapshot, all four tables) ----
+# Combines the dist_fv/dist_ll/dist_zd/dist_dt captures taken above,
+# right before each table's own distinct() step. Feeds thesis Figure 2.2
+# and the DATHARM audit's fig1a/table1a — see the capture_dup_distribution
+# comment near the top of this script for why this can't be computed
+# downstream in 09_data_investigations.R anymore.
+dedup_set_size_distribution <- bind_rows(dist_fv, dist_ll, dist_zd, dist_dt) %>%
+  build_dist_for_plot()
 
 
 #----------------------------#LGA Level#--------------------------------#
@@ -705,7 +755,10 @@ saveRDS(data_dt_clean,
         file.path(out_dir, "01_defaultertracing_clean.rds"))
 saveRDS(dedup_summary_import,
         file.path(out_dir, "01_dedup_summary.rds"))
+saveRDS(dedup_set_size_distribution,
+        file.path(out_dir, "01_dedup_set_size_distribution.rds"))
 
 
 
 #--------------------------(END)------------------------------#
+

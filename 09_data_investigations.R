@@ -39,25 +39,35 @@ cat("  facility_visits:   ", nrow(data_fv), "\n")
 cat("  identified_zd:     ", nrow(data_zd), "\n")
 cat("  defaulter_tracing: ", nrow(data_dt), "\n\n")
 
-# NOTE: 01_mchtrack_import.R does not deduplicate any of these tables at
-# the row level (confirmed by reading it directly — its group_by()/
-# distinct() calls are all for building aggregate panels, none drop
-# duplicate rows from the tables above). Everything below that reports a
-# duplicate rate is reporting on data that is STILL duplicated at this
-# point in the pipeline, unless this script's own deduplicated exports
-# (Section 1) are the ones downstream scripts actually load.
+# UPDATE (15/7/2026): 01_mchtrack_import.R now deduplicates all four tables
+# at source (distinct() on the same compound keys used below, applied
+# before each table is saved). data_ll/data_fv/data_zd/data_dt loaded above
+# should therefore already be duplicate-free if 01 has been rerun since that
+# patch. Section 1 below is now a VERIFICATION check, not the fix itself —
+# if it reports nonzero duplicate_rows, either 01_mchtrack_import.R hasn't
+# been rerun yet, or the source data changed and reintroduced duplicates.
+# Previously this section computed its own separate deduplicated exports
+# (09_linelisted_deduped.rds / 09_facility_visits_deduped.rds) because
+# nothing upstream was deduping. Those are gone now that the fix lives at
+# the actual source — keeping a second, unused "deduped" copy alongside the
+# real one invited exactly the kind of drift this whole rebuild is trying
+# to eliminate.
 
 #----------------------------------------------------------------------------
 
 ##########################################################
-# 1. Duplicate-record detection and deduplication         #
-# Feeds: thesis fig-2-2, DATHARM audit fig1a/table1a       #
+# 1. Duplicate-record verification (post 01_mchtrack_import.R fix) #
+# Feeds: thesis fig-2-2/fig-3-2, DATHARM audit fig1a/table1a         #
 ##########################################################
 
-# Compound keys match the DATHARM audit's original methodology exactly:
-#   linelisted:       pseudo_id
-#   facility_visits:  patient_id + visit_date + health_center_id +
-#                      vaccines_administered
+# Compound keys match the DATHARM audit's original methodology and the
+# keys now applied in 01_mchtrack_import.R's own dedup step:
+#   linelisted:        pseudo_id
+#   facility_visits:   patient_id + visit_date + health_center_id +
+#                       vaccines_administered
+#   identifiedZd:       id
+#   defaulterTracing:   id
+# identifiedZd and defaulterTracing were never checked before this update.
 # Blank/NA key rows excluded from duplicate detection (can't be compared).
 
 detect_duplicates <- function(df, key_cols, table_label) {
@@ -87,79 +97,64 @@ detect_duplicates <- function(df, key_cols, table_label) {
 dup_ll <- detect_duplicates(data_ll, "pseudo_id", "Linelisted (children enrolled)")
 dup_fv <- detect_duplicates(data_fv, c("patient_id", "visit_date", "health_center_id", "vaccines_administered"),
                             "Facility visits (vaccination records)")
+dup_zd <- detect_duplicates(data_zd, "id", "Identified zero-dose")
+dup_dt <- detect_duplicates(data_dt, "id", "Defaulter tracing")
 
 cat("--- Duplicate summary: linelisted ---\n"); print(dup_ll$summary)
 cat("\n--- Duplicate summary: facility visits ---\n"); print(dup_fv$summary)
+cat("\n--- Duplicate summary: identified zero-dose ---\n"); print(dup_zd$summary)
+cat("\n--- Duplicate summary: defaulter tracing ---\n"); print(dup_dt$summary)
 cat("\n")
 
 dup_summary_all <- bind_rows(
   dup_ll$summary %>% mutate(table = "Linelisted (children enrolled)"),
-  dup_fv$summary %>% mutate(table = "Facility visits (vaccination records)")
+  dup_fv$summary %>% mutate(table = "Facility visits (vaccination records)"),
+  dup_zd$summary %>% mutate(table = "Identified zero-dose"),
+  dup_dt$summary %>% mutate(table = "Defaulter tracing")
 )
 
-# Set-size distribution, pooling rare sizes into "Other" — same treatment
-# as the original DATHARM audit chart, but computed live instead of typed
-# in. Which sizes count as "rare" (i.e. get pooled) is data-driven here:
-# any size representing fewer than 1% of duplicated rows within its table,
-# rather than a hand-picked list, so this doesn't need updating by hand if
-# the underlying data changes. STATE IS KEPT (not collapsed) so a
-# downstream visualization script can build either an all-states chart
-# (thesis) or a Katsina-only chart (DATHARM audit fig1a, which never
-# covered Kano since Kano had no duplicates) from the same export.
-# NOTE: no plot is built or saved here — this script produces numbers
-# only. All chart-building lives in 10_visualizations.R, matching the
-# same compute/presentation split already applied to the thesis's 09/10
-# scripts and now extended to the DATHARM audit doc's inputs too.
-build_dist_for_plot <- function(dist) {
-  dist %>%
-    group_by(table) %>%
-    mutate(pct_of_dup_rows = rows_from_duplication / sum(rows_from_duplication)) %>%
-    ungroup() %>%
-    mutate(set_size_label = if_else(pct_of_dup_rows < 0.01, "Other", as.character(set_size))) %>%
-    group_by(table, state, set_size_label) %>%
-    summarise(rows_from_duplication = sum(rows_from_duplication), .groups = "drop")
+n_dup_remaining <- sum(dup_summary_all$duplicate_rows)
+if (n_dup_remaining > 0) {
+  warning("Section 1: ", n_dup_remaining, " duplicate rows still present across the four ",
+          "tables after 01_mchtrack_import.R's dedup step. Either 01 hasn't been rerun since ",
+          "the 15/7/2026 patch, or its dedup keys don't fully match what's actually duplicated ",
+          "here — check dup_summary_all before trusting downstream figures.", call. = FALSE)
+} else {
+  cat("--- VERIFIED: zero duplicate rows remain across all four tables ---\n\n")
 }
 
-dup_dist_plot <- bind_rows(dup_ll$distribution, dup_fv$distribution) %>%
-  build_dist_for_plot()
+# Set-size distribution is NOT computed here anymore. By the time this
+# script runs, data_ll/data_fv/data_zd/data_dt are already deduplicated
+# (loaded from 01's cleaned outputs, per the UPDATE note above) — so
+# rebuilding the distribution from these tables now returns zero rows for
+# every state and table, which broke Figure 2.2's facet_wrap() downstream
+# in 10_visualizations.R (discovered 15/7/2026). 01_mchtrack_import.R
+# captures the same distribution earlier, right before its own distinct()
+# step collapses it, and exports it as 01_dedup_set_size_distribution.rds.
+# This script just passes that through under its existing filename below
+# so 10_visualizations.R's read path doesn't need to change.
+dist_snapshot_path <- file.path(mch_dir, "01_dedup_set_size_distribution.rds")
+if (!file.exists(dist_snapshot_path)) {
+  stop("01_dedup_set_size_distribution.rds not found in ", mch_dir, " — rerun ",
+       "01_mchtrack_import.R (15/7/2026 patch adds this export) before running ",
+       "this script.", call. = FALSE)
+}
+dup_dist_plot <- readRDS(dist_snapshot_path)
 
-# Sample of actual duplicate rows, for the "here's what one looks like" table
+# Sample of actual duplicate rows, for the "here's what one looks like" table.
+# Post-fix this should come back empty (0 rows, head(6) of nothing) — kept
+# so the export doesn't silently disappear, and so a nonzero sample here is
+# itself a visible signal that n_dup_remaining > 0 above needs chasing.
 dup_sample_ll <- dup_ll$keyed %>% filter(set_size > 1) %>% arrange(pseudo_id) %>% head(6)
 dup_sample_fv <- dup_fv$keyed %>% filter(set_size > 1) %>% arrange(patient_id, visit_date) %>% head(6)
+dup_sample_zd <- dup_zd$keyed %>% filter(set_size > 1) %>% arrange(id) %>% head(6)
+dup_sample_dt <- dup_dt$keyed %>% filter(set_size > 1) %>% arrange(id) %>% head(6)
 
-#--- Deduplicated exports — the actual fix, not just the report -------------
-# IMPORTANT: 03_regression.R, and any
-# other script currently reading 01_linelisted_clean.rds /
-# 01_facility_visits_clean.rds directly, should be updated to read these
-# deduplicated versions instead, or Katsina-inclusive results (RQ1, RQ2)
-# remain built on the same inflated data the audit flagged. This has not
-# been done yet in the scripts already rewritten today — flagging clearly
-# rather than silently leaving it broken.
-
-data_ll_deduped <- dup_ll$keyed %>%
-  group_by(across(-set_size)) %>%
-  slice(1) %>%
-  ungroup() %>%
-  select(-set_size)
-
-data_fv_deduped <- dup_fv$keyed %>%
-  group_by(across(-set_size)) %>%
-  slice(1) %>%
-  ungroup() %>%
-  select(-set_size)
-
-cat("Deduplication result:\n")
-cat("  linelisted:      ", nrow(data_ll), "->", nrow(data_ll_deduped),
-    "(", nrow(data_ll) - nrow(data_ll_deduped), "rows removed)\n")
-cat("  facility_visits: ", nrow(data_fv), "->", nrow(data_fv_deduped),
-    "(", nrow(data_fv) - nrow(data_fv_deduped), "rows removed)\n\n")
-
-saveRDS(dup_summary_all,     file.path(out_dir, "09_dedup_summary_by_state.rds"))
-saveRDS(dup_dist_plot,       file.path(out_dir, "09_dedup_set_size_distribution.rds"))
-saveRDS(list(linelisted = dup_sample_ll, facility_visits = dup_sample_fv),
+saveRDS(dup_summary_all, file.path(out_dir, "09_dedup_summary_by_state.rds"))
+saveRDS(dup_dist_plot,   file.path(out_dir, "09_dedup_set_size_distribution.rds"))
+saveRDS(list(linelisted = dup_sample_ll, facility_visits = dup_sample_fv,
+             identified_zd = dup_sample_zd, defaulter_tracing = dup_sample_dt),
         file.path(out_dir, "09_dedup_sample_rows.rds"))
-saveRDS(data_ll_deduped, file.path(out_dir, "09_linelisted_deduped.rds"))
-saveRDS(data_fv_deduped, file.path(out_dir, "09_facility_visits_deduped.rds"))
 
 #----------------------------------------------------------------------------
 
@@ -504,11 +499,10 @@ cat("audit, not on a number this pipeline can regenerate.\n\n")
 
 cat("=== ALL INVESTIGATIONS COMPLETE ===\n")
 cat("Outputs saved to:", out_dir, "\n\n")
-cat("  09_dedup_summary_by_state.rds\n")
+cat("  09_dedup_summary_by_state.rds      <- verification only; dedup itself now happens\n")
+cat("                                        in 01_mchtrack_import.R at source\n")
 cat("  09_dedup_set_size_distribution.rds\n")
 cat("  09_dedup_sample_rows.rds\n")
-cat("  09_linelisted_deduped.rds          <- downstream scripts should switch to this\n")
-cat("  09_facility_visits_deduped.rds     <- downstream scripts should switch to this\n")
 cat("  09_null_lga_summary.rds\n")
 cat("  09_null_lga_by_state.rds\n")
 cat("  09_recovery_ladder.rds\n")
@@ -524,18 +518,13 @@ cat("   nothing to export — one is a confirmed non-issue, the other a\n")
 cat("   confirmed non-reproducible metric)\n\n")
 
 cat("--- Open items before this feeds anything downstream ---\n")
-cat("1. Confirm 01_identifiedzd_clean.rds / 01_defaultertracing_clean.rds are\n")
-cat("   the actual saved filenames from 01_mchtrack_import.R -- inferred from\n")
-cat("   its naming pattern (01_linelisted_clean.rds, 01_facility_visits_clean.rds)\n")
-cat("   but not confirmed directly against its Export section in this session.\n")
-cat("2. Decide whether 03_regression.R should be updated to read\n")
-cat("   09_linelisted_deduped.rds / 09_facility_visits_deduped.rds instead of\n")
-cat("   01's originals -- as written today it still reads the un-deduplicated\n")
-cat("   tables, which undercuts the fix this script produces.\n")
-cat("3. Verify deceased_pattern (Section 6) against the real tracing_outcome\n")
+cat("1. Verify deceased_pattern (Section 6) against the real tracing_outcome\n")
 cat("   value list printed above before trusting the ward death-rate chart.\n")
-cat("4. Section 5's ZD reconciliation is a proxy, not a reproduction --\n")
+cat("2. Section 5's ZD reconciliation is a proxy, not a reproduction --\n")
 cat("   confirm whether the expanded identified_zd export DATHARM's data\n")
 cat("   manager built is available as a separate file before citing it.\n")
+cat("3. n_dup_remaining above should be 0. If it isn't, 01_mchtrack_import.R\n")
+cat("   hasn't been rerun since its 15/7/2026 dedup patch -- rerun 01 before\n")
+cat("   trusting anything else in this script's output.\n")
 
 #--------------------------(END)------------------------------#
