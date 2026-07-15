@@ -1,9 +1,8 @@
-########################################################
-#  Figures and Tables — Build Script (thesis + DATHARM) #
-#  Created on: 14/07/2026                               #
-#  Updated on: 15/07/2026                               #
-########################################################
-
+########################################
+#  10_visualizations.R                 #
+#  Created: 13/7/2026                  #
+#  Updated: 15/7/2026                  #
+########################################
 
 # Reset environment -----------------------------------------------------
 
@@ -478,6 +477,7 @@ null_lga_path <- file.path(inv_dir, "09_null_lga_summary.rds")
 
 if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path, "Figure 3.2 sample waterfall")) {
   data_ll_raw <- readRDS(ll_path)
+  n_all     <- nrow(data_ll_raw)
   n_start   <- data_ll_raw %>% filter(woman_or_child == "child") %>% nrow()
   n_dist_ok <- data_ll_raw %>% filter(woman_or_child == "child") %>%
     left_join(readRDS(file.path(mch_dir, "01_any_vaccine_flag.rds")),
@@ -485,9 +485,26 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
     filter(!is.na(hf_distance_km)) %>% nrow()
   n_rimi_ok <- readRDS(ma_path) %>% filter(!is.na(hf_distance_km), !rimi_flag) %>% nrow()
   n_final   <- readRDS(ma_path) %>% filter(in_primary_sample) %>% nrow()
-  other_residual <- max(n_rimi_ok - n_final, 0)
   
-  # Real, uncapped counts for the "known but not yet excluded" annotation.
+  # Reconciliation check only, not a plotted bar: the gap between the last
+  # applied exclusion step and n_final should be ~0 given the four steps
+  # below are the only ones 03_regression.R actually applies. A material
+  # gap here would mean an undocumented exclusion is happening somewhere
+  # in 03_regression.R that this waterfall doesn't account for.
+  reconciliation_gap <- n_rimi_ok - n_final
+  if (abs(reconciliation_gap) > 0.01 * n_rimi_ok) {
+    warning("Fig 3.2: reconciliation_gap (", comma(reconciliation_gap), ") exceeds 1% of ",
+            "n_rimi_ok — an exclusion step in 03_regression.R is not accounted for in this ",
+            "waterfall. Investigate before trusting the chart.", call. = FALSE)
+  }
+  
+  # Real, uncapped counts — these are known, real exclusions that 03_regression.R
+  # does NOT yet apply (it still reads 01's un-deduplicated, non-Null-LGA-filtered
+  # tables; see 09_data_investigations.R Section 1). They are not drawn as waterfall
+  # bars because they aren't actually reflected in n_final — showing them as
+  # subtracted steps would double-count against a total that doesn't include them.
+  # This is a pipeline decision (should 03_regression.R dedupe upstream?), not a
+  # charting one — flagged to Khem rather than silently applied here.
   null_lga_n <- if (require_file(null_lga_path, "Figure 3.2 Null-LGA count")) {
     readRDS(null_lga_path)$n_null_lga
   } else NA_integer_
@@ -499,20 +516,21 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
   
   wf <- tribble(
     ~step, ~label, ~n, ~type,
-    1, "Children in\nlinelisted (both states)", n_start, "start",
-    2, "Missing / implausible\ndistance", n_start - n_dist_ok, "exclude",
-    3, "Rimi LGA\n(backfill)", n_dist_ok - n_rimi_ok, "exclude",
-    4, "Other / unverified\nexclusions", other_residual, "exclude",
+    1, "Full linelisted\n(both states)", n_all, "start",
+    2, "Women excluded\n(not a child record)", n_all - n_start, "exclude",
+    3, "Missing / implausible\ndistance", n_start - n_dist_ok, "exclude",
+    4, "Rimi LGA\n(backfill)", n_dist_ok - n_rimi_ok, "exclude",
     5, "Primary analytic\nsample", n_final, "end"
   ) %>%
     mutate(delta = case_when(type == "start" ~ n, type == "end" ~ 0, TRUE ~ -n),
            remaining = cumsum(delta))
   
   known_issues_lab <- paste0(
-    "Known but NOT YET excluded from the primary sample above: ",
-    comma(null_lga_n), " Null-LGA rows and ", comma(dedup_ll_n),
-    " duplicate pseudo-ID rows (linelisted, both states). 03_regression.R\n",
-    "still reads 01's un-deduplicated tables — see 09_data_investigations.R Section 1."
+    "NOT YET excluded from the primary sample above (03_regression.R still reads 01's\n",
+    "un-deduplicated, non-Null-LGA-filtered tables — see 09_data_investigations.R Section 1): ",
+    comma(dedup_ll_n), " duplicate pseudo-ID rows and ", comma(null_lga_n), " Null-LGA rows.\n",
+    "If applied, the primary sample above would fall to approximately ",
+    comma(n_final - coalesce(dedup_ll_n, 0L) - coalesce(null_lga_n, 0L)), "."
   )
   
   fig_3_2 <- ggplot(wf, aes(x = step)) +
@@ -544,6 +562,88 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
 }
 
 artifacts$fig_3_2_path <- save_fig(fig_3_2, "fig_3_2", width = 8.6, height = 4.6)
+
+########################################
+# Figure 3.2b — Sample construction,   #
+# split by state (duplicates/Null-LGA  #
+# land very differently on Kano vs     #
+# Katsina; a pooled chart hides that)  #
+########################################
+
+null_lga_state_path <- file.path(inv_dir, "09_null_lga_by_state.rds")
+if (require_file(ll_path, "Figure 3.2b sample waterfall") && require_file(ma_path, "Figure 3.2b sample waterfall") &&
+    require_file(null_lga_state_path, "Figure 3.2b Null-LGA by state") &&
+    require_file(dedup_summary_path, "Figure 3.2b duplicate count by state")) {
+  
+  ma_all <- readRDS(ma_path)
+  vax_flag <- readRDS(file.path(mch_dir, "01_any_vaccine_flag.rds"))
+  null_lga_state <- readRDS(null_lga_state_path)
+  dedup_state <- readRDS(dedup_summary_path) %>% filter(table == "Linelisted (children enrolled)")
+  
+  build_state_waterfall <- function(st) {
+    ll_st <- data_ll_raw %>% filter(state == st)
+    n_all_st   <- nrow(ll_st)
+    n_start_st <- ll_st %>% filter(woman_or_child == "child") %>% nrow()
+    n_dist_st  <- ll_st %>% filter(woman_or_child == "child") %>%
+      left_join(vax_flag, by = c("pseudo_id" = "patient_id")) %>%
+      filter(!is.na(hf_distance_km)) %>% nrow()
+    n_rimi_st  <- ma_all %>% filter(state == st, !is.na(hf_distance_km), !rimi_flag) %>% nrow()
+    n_final_st <- ma_all %>% filter(state == st, in_primary_sample) %>% nrow()
+    tribble(
+      ~step, ~label, ~n, ~type,
+      1, "Full linelisted", n_all_st, "start",
+      2, "Women excluded", n_all_st - n_start_st, "exclude",
+      3, "Missing / implausible\ndistance", n_start_st - n_dist_st, "exclude",
+      4, "Rimi LGA\n(backfill)", n_dist_st - n_rimi_st, "exclude",
+      5, "Primary analytic\nsample", n_final_st, "end"
+    ) %>%
+      mutate(state = st,
+             delta = case_when(type == "start" ~ n, type == "end" ~ 0, TRUE ~ -n),
+             remaining = cumsum(delta))
+  }
+  
+  wf_state <- bind_rows(build_state_waterfall("Kano"), build_state_waterfall("Katsina")) %>%
+    mutate(state = factor(state, levels = c("Kano", "Katsina")))
+  
+  # Not-yet-applied duplicate/Null-LGA counts, by state, for the caption --
+  # this is where the asymmetry Khem flagged shows up: duplicates and
+  # Null-LGA rows are not evenly spread across the two states.
+  not_yet_lab <- dedup_state %>%
+    left_join(null_lga_state, by = "state") %>%
+    mutate(lab = paste0(state, ": ", comma(duplicate_rows), " duplicate rows, ",
+                        comma(n_null_lga), " Null-LGA rows (not yet excluded)")) %>%
+    pull(lab) %>% paste(collapse = "  ·  ")
+  
+  fig_3_2b <- ggplot(wf_state, aes(x = step)) +
+    geom_rect(aes(xmin = step - 0.4, xmax = step + 0.4,
+                  ymin = if_else(type == "exclude", remaining, 0),
+                  ymax = if_else(type == "exclude", remaining + n, remaining),
+                  fill = type), colour = "white", linewidth = 0.3) +
+    geom_text(data = ~subset(.x, type != "exclude"),
+              aes(y = remaining / 2, label = comma(n)), size = 2.6, fontface = "bold",
+              colour = "white", family = "serif") +
+    geom_text(data = ~subset(.x, type == "exclude" & n > 0),
+              aes(y = remaining + n, label = paste0("−", comma(n))),
+              vjust = -0.6, size = 2.3, fontface = "bold", colour = "#C0312D", family = "serif") +
+    geom_text(aes(y = 0, label = label), vjust = 1.8, size = 1.95, lineheight = 0.85,
+              colour = "#333", family = "serif") +
+    facet_wrap(~state, scales = "free_y") +
+    scale_fill_manual(values = c("start" = "#1D6FA4", "exclude" = "#C0312D", "end" = "#1D9E75"),
+                      labels = c("start" = "Starting N", "exclude" = "Excluded", "end" = "Analytic sample"),
+                      guide = guide_legend(reverse = TRUE)) +
+    scale_y_continuous(labels = comma, expand = expansion(mult = c(0.15, 0.15))) +
+    scale_x_continuous(breaks = NULL) +
+    labs(title = "Figure 3.2b.  Analytic sample construction, by state",
+         x = NULL, y = "Row count",
+         caption = paste0("Computed live from 01_linelisted_clean.rds and 03_model_a_dataset.rds.\nNOT YET excluded from either state's sample above: ", not_yet_lab)) +
+    theme_diss(11) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+          strip.text = element_text(face = "bold", size = 11))
+} else {
+  fig_3_2b <- placeholder_plot("MISSING INPUT\nsee Figure 3.2b requirements")
+}
+
+artifacts$fig_3_2b_path <- save_fig(fig_3_2b, "fig_3_2b", width = 9.4, height = 4.8)
 
 ########################################
 # Figure 3.3 — ZD model coefficients   #
@@ -1129,7 +1229,17 @@ artifacts_datharm$ladder_legend <- ladder_legend_datharm
 ########################################
 
 ladder_path <- file.path(inv_dir, "09_recovery_ladder.rds")
+na_outcome_path <- file.path(inv_dir, "09_ladder_na_outcome_by_state.rds")
 if (require_file(ladder_path, "Fig2A recovery ladder")) {
+  ladder_na_lab <- if (require_file(na_outcome_path, "Fig2A NA-outcome caption")) {
+    na_tab <- readRDS(na_outcome_path) %>% filter(n_na_tracing_outcome > 0)
+    if (nrow(na_tab) > 0) {
+      paste0("Excludes rows with missing tracing_outcome from each state's denominator: ",
+             paste0(na_tab$state, " (", comma(na_tab$n_na_tracing_outcome), " of ",
+                    comma(na_tab$n_total), ")", collapse = ", "), ".")
+    } else NA_character_
+  } else NA_character_
+  
   ladder_datharm <- readRDS(ladder_path) %>%
     mutate(
       Level = case_when(
@@ -1160,7 +1270,8 @@ if (require_file(ladder_path, "Fig2A recovery ladder")) {
     scale_y_continuous(limits = c(0, 100), labels = function(x) paste0(x, "%"), expand = c(0, 0)) +
     scale_fill_manual(values = level_colour, guide = "none") +
     labs(title = "\"Recovered\" defaulter rate varies widely by definition used",
-         x = NULL, y = "Share of traced defaulters") +
+         x = NULL, y = "Share of traced defaulters",
+         caption = if (!is.na(ladder_na_lab)) ladder_na_lab else NULL) +
     theme_datharm(12.5) +
     theme(plot.margin = margin(5.5, 46, 5.5, 5.5), strip.text = element_text(face = "bold", size = 12))
 } else {

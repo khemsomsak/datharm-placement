@@ -1,13 +1,8 @@
-########################################################
-#  ERA5 UTCI Heat Stress — Daily Regression Analysis   #
-#  Outcome: Daily facility visit counts, Kano          #
-#  Exposure: Extreme heat days (UTCI >= 38°C)          #
-#  Sites: Ungogo & Gabasawa LGAs                       #
-#  Created: June 2026                                  #
-#  Last Updated 13/7/2026 — added negative binomial    #
-#  comparison per Aisha's c155 (NB may be the better   #
-#  primary spec, not just a robustness check)          #
-########################################################
+########################################
+#  06_era5_analysis.R                  #
+#  Created: June 2026                  #
+#  Updated: 13/7/2026                  #
+########################################
 
 # Reset environment -----------------------------------------------------
 
@@ -221,7 +216,27 @@ modelsummary(
   output  = file.path(out_dir, "06_regression_daily.docx")
 )
 
+# ADDED 13/7/2026 — .docx cannot be parsed by 09_visualizations.R's
+# parse_ms_txt() helper (needs the same pipe-delimited plain-text format
+# already used for 02_model_b_tracing_effectiveness.txt). Same model list,
+# .txt output, so D3/D4 heat coefficients can be pulled dynamically instead
+# of hand-typed into the weather table.
+modelsummary(
+  list(
+    "D1: LGA FE"          = d1,
+    "D2: +DOW FE"         = d2,
+    "D3: +Month-year FE"  = d3,
+    "D4: Continuous UTCI" = d4,
+    "D5: Distributed lag" = d5
+  ),
+  stars   = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  gof_map = c("nobs", "r.squared", "adj.r.squared"),
+  title   = "Heat stress and facility visits — daily panel · Kano Aug 2024 – Mar 2026",
+  output  = file.path(out_dir, "06_regression_daily.txt")
+)
+
 cat("\nTable saved to:", file.path(out_dir, "06_regression_daily.docx"), "\n")
+cat("Parseable copy saved to:", file.path(out_dir, "06_regression_daily.txt"), "\n")
 
 #----------------------------------------------------------------------------
 

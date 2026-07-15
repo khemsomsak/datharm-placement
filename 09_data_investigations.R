@@ -1,20 +1,8 @@
-########################################################
-#  Data Quality Investigations                         #
-#  Produces the analysis both the thesis visualization  #
-#  script and the DATHARM audit document need, so       #
-#  neither one hand-types a data-quality number again.  #
-#  Numbered 09 (after 08_ndvi_analysis.R, before          #
-#  10_visualizations.R) rather than inserted early in     #
-#  the sequence -- only reads 01_mchtrack_import.R's      #
-#  outputs directly, so its position in the numbering     #
-#  does not create an execution-order dependency on       #
-#  02-08. Its deduplicated exports (09_linelisted_deduped, #
-#  09_facility_visits_deduped) are NOT yet consumed by     #
-#  02-08, which still read 01's un-deduplicated tables --  #
-#  see the note near those exports below.                  #
-#  Created 13/7/2026, renamed from 02_data_investigations.R #
-#  same day.                                                #
-########################################################
+########################################
+#  09_data_investigations.R            #
+#  Created: 13/7/2026                  #
+#  Updated: 15/7/2026                  #
+########################################
 
 # Reset environment -----------------------------------------------------
 
@@ -192,9 +180,16 @@ null_lga_summary <- data_ll %>%
   mutate(lga_is_null = is.na(lga_name) | lga_name == "" | str_to_lower(lga_name) == "na") %>%
   summarise(n_null_lga = sum(lga_is_null), pct_null_lga = round(mean(lga_is_null) * 100, 2))
 
+null_lga_by_state <- data_ll %>%
+  mutate(lga_is_null = is.na(lga_name) | lga_name == "" | str_to_lower(lga_name) == "na") %>%
+  group_by(state) %>%
+  summarise(n_null_lga = sum(lga_is_null), pct_null_lga = round(mean(lga_is_null) * 100, 2), .groups = "drop")
+
 cat("--- Unattributed LGA rows (linelisted) ---\n"); print(null_lga_summary); cat("\n")
+cat("--- Unattributed LGA rows by state ---\n"); print(null_lga_by_state); cat("\n")
 
 saveRDS(null_lga_summary, file.path(out_dir, "09_null_lga_summary.rds"))
+saveRDS(null_lga_by_state, file.path(out_dir, "09_null_lga_by_state.rds"))
 
 #----------------------------------------------------------------------------
 
@@ -231,14 +226,27 @@ ladder_base <- data_dt %>%
     l4 = l3 & !is.na(has_named_vaccine_visit)
   )
 
+# l1 uses %in%, which never returns NA even when tracing_outcome is NA.
+# l2 uses ==, which does propagate NA. l3/l4 inherit any NA from l2. So a
+# state with any NA tracing_outcome rows would previously return Pct = NA
+# for L2-L4 only (L1 still fine), leaking through the ggplot as bars that
+# just don't draw -- exactly the missing-Kano-bars pattern. Fixed with
+# na.rm = TRUE, and NA-outcome rows are now surfaced explicitly instead of
+# silently vanishing from the denominator's numerator only.
+n_na_outcome <- ladder_base %>%
+  group_by(state) %>%
+  summarise(n_na_tracing_outcome = sum(is.na(tracing_outcome)), n_total = n(), .groups = "drop")
+cat("--- NA tracing_outcome rows by state (denominator check for ladder) ---\n")
+print(n_na_outcome); cat("\n")
+
 recovery_ladder <- ladder_base %>%
   group_by(state) %>%
   summarise(
     n_traced = n(),
-    L1 = round(mean(l1) * 100, 1),
-    L2 = round(mean(l2) * 100, 1),
-    L3 = round(mean(l3) * 100, 1),
-    L4 = round(mean(l4) * 100, 1),
+    L1 = round(mean(l1, na.rm = TRUE) * 100, 1),
+    L2 = round(mean(l2, na.rm = TRUE) * 100, 1),
+    L3 = round(mean(l3, na.rm = TRUE) * 100, 1),
+    L4 = round(mean(l4, na.rm = TRUE) * 100, 1),
     .groups = "drop"
   ) %>%
   pivot_longer(c(L1, L2, L3, L4), names_to = "Level", values_to = "Pct")
@@ -246,6 +254,7 @@ recovery_ladder <- ladder_base %>%
 cat("--- Recovery ladder (L1-L4) by state ---\n"); print(recovery_ladder); cat("\n")
 
 saveRDS(recovery_ladder, file.path(out_dir, "09_recovery_ladder.rds"))
+saveRDS(n_na_outcome, file.path(out_dir, "09_ladder_na_outcome_by_state.rds"))
 
 #----------------------------------------------------------------------------
 
@@ -501,7 +510,9 @@ cat("  09_dedup_sample_rows.rds\n")
 cat("  09_linelisted_deduped.rds          <- downstream scripts should switch to this\n")
 cat("  09_facility_visits_deduped.rds     <- downstream scripts should switch to this\n")
 cat("  09_null_lga_summary.rds\n")
+cat("  09_null_lga_by_state.rds\n")
 cat("  09_recovery_ladder.rds\n")
+cat("  09_ladder_na_outcome_by_state.rds\n")
 cat("  09_offnetwork_share_by_state.rds\n")
 cat("  09_offnetwork_sample.rds\n")
 cat("  09_zd_reconciliation_proxy.rds     <- PROXY, see Section 5 caveat\n")
