@@ -1,8 +1,9 @@
 ########################################################
 #  Figures and Tables — Build Script (thesis + DATHARM) #
 #  Created on: 14/07/2026                               #
-#  Updated on: 14/07/2026                               #
+#  Updated on: 15/07/2026                               #
 ########################################################
+
 
 # Reset environment -----------------------------------------------------
 
@@ -44,13 +45,27 @@ library(scales)
 # Reads a modelsummary plain-text (pipe-delimited) table into a term/values
 # tibble. Same helper as the original 09_visualization_markdown.Rmd — kept
 # unchanged since it already worked correctly for b_n/b_r2 there.
+# BUGFIX (14/7/2026): `.[. != ""]` used to strip EVERY empty cell from a
+# row, not just the leading/trailing ones produced by the line's outer
+# pipe characters. modelsummary's SE rows have a genuinely blank term
+# cell (coefficient on one row with a real label, SE directly below with
+# an empty label) -- stripping that blank cell shifted the whole row one
+# column left, so extract_coef_se()'s "is the next row's term blank"
+# check never matched. This is why every SE (and therefore every CI and
+# every ci_cell() "NA — check upstream file") failed 100% of the time,
+# confirmed against the uploaded 10_artifacts.rds: coefficients parsed
+# fine, standard errors were NA/NaN across every single term. Now only
+# the first/last cell of a row is dropped when empty (the real pipe-
+# boundary artifact), leaving a genuinely blank interior term cell intact.
 parse_ms_txt <- function(path) {
   if (!file.exists(path)) return(NULL)
   lines <- readLines(path, warn = FALSE)
   rows  <- lines[str_detect(lines, "\\|") & !str_detect(lines, "^[+=]+$") &
                    !str_detect(lines, "^\\+[-=+]+\\+$")]
   map_dfr(rows, function(r) {
-    cells <- str_split(r, "\\|")[[1]] %>% str_trim() %>% .[. != ""]
+    cells <- str_split(r, "\\|")[[1]] %>% str_trim()
+    if (length(cells) >= 2 && cells[1] == "") cells <- cells[-1]
+    if (length(cells) >= 2 && cells[length(cells)] == "") cells <- cells[-length(cells)]
     if (length(cells) >= 1) tibble(term = cells[1], values = list(cells[-1])) else NULL
   })
 }
@@ -197,8 +212,8 @@ a1_age  <- ci_cell(a1_age_raw$coef,  a1_age_raw$se);  a2_age  <- ci_cell(a2_age_
 a1_sex  <- ci_cell(a1_sex_raw$coef,  a1_sex_raw$se);  a2_sex  <- ci_cell(a2_sex_raw$coef,  a2_sex_raw$se)
 
 a_n  <- fb(ev(ma_parsed, "Num.Obs", 1), "NA — check 01_model_a_zerodose_predictors.txt")
-a_r2 <- fb(ev(ma_parsed, "R2 ", 1), "NA")
-a_r2_strict <- fb(ev(ma_parsed, "R2 ", 2), "NA")
+a_r2 <- fb(ev(ma_parsed, "R2", 1), "NA")
+a_r2_strict <- fb(ev(ma_parsed, "R2", 2), "NA")
 
 cat("--- Model A coefficient extraction check ---\n")
 cat("  Primary distance:", a1_dist_raw$coef, "(se", a1_dist_raw$se, ")\n")
@@ -224,7 +239,7 @@ b1_age  <- ci_cell(b1_age_raw$coef,  b1_age_raw$se)
 b1_lag  <- ci_cell(b1_lag_raw$coef,  b1_lag_raw$se)
 
 b_n  <- fb(ev(mb_robust, "Num.Obs", 1), "NA")
-b_r2 <- fb(ev(mb_robust, "R2 ", 1), "NA")
+b_r2 <- fb(ev(mb_robust, "R2", 1), "NA")
 
 # Table 3.1b — full sample vs lag-time subset. Reads the DEDICATED file
 # 03_regression.R (-> 04_regression.R once renumbered) produces
@@ -245,9 +260,9 @@ b_lag_age_raw   <- extract_coef_se(tab31b_parsed, "Age at tracing", col = 2)
 b_lag_lag_raw   <- extract_coef_se(tab31b_parsed, "Days since last visit", col = 2)
 
 b_full_n  <- fb(ev(tab31b_parsed, "Num.Obs", 1), "NA")
-b_full_r2 <- fb(ev(tab31b_parsed, "R2 ", 1), "NA")
+b_full_r2 <- fb(ev(tab31b_parsed, "R2", 1), "NA")
 b_lag_n   <- fb(ev(tab31b_parsed, "Num.Obs", 2), "NA")
-b_lag_r2  <- fb(ev(tab31b_parsed, "R2 ", 2), "NA")
+b_lag_r2  <- fb(ev(tab31b_parsed, "R2", 2), "NA")
 
 if (tab31b_ok && !is.na(b_full_n) && !is.na(b_lag_n) && b_full_n == b_lag_n) {
   warning("Table 3.1b: Full sample N equals Lag-time subset N — this is the ",
@@ -307,29 +322,41 @@ artifacts$fig_2_1_path <- save_fig(fig_2_1, "fig_2_1", width = 8.6, height = 4.2
 # 09_data_investigations.R instead.    #
 ########################################
 
+# CHANGED (14/7/2026): a single pct_duplicate bar per state/table is
+# uninformative for Kano, which is 0% throughout — that comparison tells
+# the reader nothing about what the duplication actually looks like.
+# Replaced with the same set-size distribution used in DATHARM's fig1a
+# (how many rows come from a record synced 2x, 3x, 8x, 82x...), faceted
+# by state so Kano's cleanliness is shown directly (empty panel) rather
+# than collapsed into a single flat number.
+
 dedup_summary_path <- file.path(inv_dir, "09_dedup_summary_by_state.rds")
-if (require_file(dedup_summary_path, "Figure 2.2 duplicate rates")) {
-  dedup_summary <- readRDS(dedup_summary_path) %>%
-    mutate(table = factor(table, levels = c("Linelisted (children enrolled)", "Facility visits (vaccination records)")))
+dedup_dist_path    <- file.path(inv_dir, "09_dedup_set_size_distribution.rds")
+
+if (require_file(dedup_dist_path, "Figure 2.2 duplicate set-size distribution")) {
+  dedup_dist_22 <- readRDS(dedup_dist_path) %>%
+    mutate(table = factor(table, levels = c("Linelisted (children enrolled)", "Facility visits (vaccination records)")),
+           state = factor(state, levels = c("Kano", "Katsina")))
   
-  fig_2_2 <- ggplot(dedup_summary, aes(x = table, y = pct_duplicate, fill = state)) +
-    geom_col(position = position_dodge(0.62), width = 0.55, alpha = 0.92) +
-    geom_text(aes(label = paste0(round(pct_duplicate, 1), "%")),
-              position = position_dodge(0.62), vjust = -0.4, size = 3.1,
-              fontface = "bold", family = "serif") +
-    scale_fill_manual(values = pal_state) +
-    scale_y_continuous(limits = c(0, max(dedup_summary$pct_duplicate, na.rm = TRUE) * 1.2 + 3),
-                       labels = label_number(suffix = "%"), expand = expansion(mult = c(0, 0.05))) +
-    labs(title = "Figure 2.2.  Duplicate record rate by state and MCHTrack table",
-         subtitle = "Computed live from 09_data_investigations.R · Katsina affected, Kano clean throughout",
-         x = NULL, y = "Duplicate rows",
-         caption = "Computed live from 09_dedup_summary_by_state.rds (compound-key duplicate detection: pseudo_id for linelisted;\npatient_id + visit_date + health_center_id + vaccines_administered for facility visits). Duplication traced to a device\nhandover causing records to sync more than once, confirmed by the Katsina coordinator.") +
-    theme_diss(11)
+  fig_2_2 <- ggplot(dedup_dist_22,
+                    aes(x = fct_reorder(set_size_label, suppressWarnings(as.numeric(set_size_label)), .na_rm = FALSE),
+                        y = rows_from_duplication, fill = table)) +
+    geom_col(position = position_dodge(width = 0.7), width = 0.62) +
+    facet_wrap(~state) +
+    scale_fill_manual(values = c("Linelisted (children enrolled)" = "#3498db",
+                                 "Facility visits (vaccination records)" = "#e74c3c")) +
+    labs(title = "Figure 2.2.  Duplicate record set sizes by state and MCHTrack table",
+         subtitle = "Computed live from 09_data_investigations.R · Kano panel empty because Kano has no duplicates",
+         x = "Number of times a record appears (duplicate set size)",
+         y = "Rows created by duplication", fill = NULL,
+         caption = "Computed live from 09_dedup_set_size_distribution.rds (compound-key duplicate detection: pseudo_id for linelisted;\npatient_id + visit_date + health_center_id + vaccines_administered for facility visits). Duplication traced to a device\nhandover causing records to sync more than once, confirmed by the Katsina coordinator.") +
+    theme_diss(11) +
+    theme(panel.grid.major.x = element_blank())
 } else {
-  fig_2_2 <- placeholder_plot("MISSING INPUT\n09_dedup_summary_by_state.rds\n(run 09_data_investigations.R)")
+  fig_2_2 <- placeholder_plot("MISSING INPUT\n09_dedup_set_size_distribution.rds\n(run 09_data_investigations.R)")
 }
 
-artifacts$fig_2_2_path <- save_fig(fig_2_2, "fig_2_2", width = 8, height = 3.8)
+artifacts$fig_2_2_path <- save_fig(fig_2_2, "fig_2_2", width = 9, height = 3.8)
 
 ########################################
 # Figure 2.3 — Overdispersion          #
@@ -430,13 +457,21 @@ artifacts$tab_3_1a <- tab_3_1a
 # 09_dedup_summary_by_state.rds.       #
 ########################################
 
-# APPROXIMATION, still flagged rather than hidden: null_lga_n and
-# dedup_ll_n below are counts within the full linelisted table, not
-# counts specifically within the subset that survives the distance and
-# Rimi filters. A row could in principle be excluded by more than one
-# filter, so these two new categories are capped with min() against the
-# remaining gap to avoid a negative bar, but the split should be read as
-# an informative approximation, not an exact accounting reconciliation.
+# FIXED (14/7/2026): the previous version capped null_lga_step and
+# dup_step at min(true_count, other_gap), where other_gap = n_rimi_ok -
+# n_final. Since 03_regression.R does not currently dedupe or drop
+# Null-LGA rows (it still reads 01's un-deduplicated tables — see
+# 09_data_investigations.R's Section 1 note), n_final barely differs from
+# n_rimi_ok, so other_gap is small and BOTH real counts got silently
+# capped down to near zero regardless of their true size. That's why the
+# chart stopped showing the duplicate-row count at all.
+#
+# Fix: keep the waterfall to the four steps 03_regression.R actually
+# applies today (start -> distance -> Rimi -> primary sample), which is
+# an internally consistent sequential total. Null-LGA and duplicate
+# counts are real but NOT YET reflected in n_final, so they're shown
+# separately as "known, not yet excluded" rather than forced into a
+# cumulative total they don't actually belong to.
 
 ll_path <- file.path(mch_dir, "01_linelisted_clean.rds")
 null_lga_path <- file.path(inv_dir, "09_null_lga_summary.rds")
@@ -450,36 +485,35 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
     filter(!is.na(hf_distance_km)) %>% nrow()
   n_rimi_ok <- readRDS(ma_path) %>% filter(!is.na(hf_distance_km), !rimi_flag) %>% nrow()
   n_final   <- readRDS(ma_path) %>% filter(in_primary_sample) %>% nrow()
+  other_residual <- max(n_rimi_ok - n_final, 0)
   
-  other_gap <- max(n_rimi_ok - n_final, 0)
-  
-  if (require_file(null_lga_path, "Figure 3.2 Null-LGA count") &&
-      require_file(dedup_summary_path, "Figure 3.2 duplicate count")) {
-    null_lga_n <- readRDS(null_lga_path)$n_null_lga
-    dedup_ll_n <- readRDS(dedup_summary_path) %>%
+  # Real, uncapped counts for the "known but not yet excluded" annotation.
+  null_lga_n <- if (require_file(null_lga_path, "Figure 3.2 Null-LGA count")) {
+    readRDS(null_lga_path)$n_null_lga
+  } else NA_integer_
+  dedup_ll_n <- if (require_file(dedup_summary_path, "Figure 3.2 duplicate count")) {
+    readRDS(dedup_summary_path) %>%
       filter(table == "Linelisted (children enrolled)") %>%
       summarise(n = sum(duplicate_rows)) %>% pull(n)
-    
-    null_lga_step  <- min(null_lga_n, other_gap)
-    remaining_gap  <- other_gap - null_lga_step
-    dup_step       <- min(dedup_ll_n, remaining_gap)
-    other_residual <- remaining_gap - dup_step
-  } else {
-    null_lga_step <- 0; dup_step <- 0; other_residual <- other_gap
-  }
+  } else NA_integer_
   
   wf <- tribble(
     ~step, ~label, ~n, ~type,
     1, "Children in\nlinelisted (both states)", n_start, "start",
     2, "Missing / implausible\ndistance", n_start - n_dist_ok, "exclude",
     3, "Rimi LGA\n(backfill)", n_dist_ok - n_rimi_ok, "exclude",
-    4, "Unattributed\n(Null) LGA", null_lga_step, "exclude",
-    5, "Duplicate\npseudo-ID rows", dup_step, "exclude",
-    6, "Other / unverified\nexclusions", other_residual, "exclude",
-    7, "Primary analytic\nsample", n_final, "end"
+    4, "Other / unverified\nexclusions", other_residual, "exclude",
+    5, "Primary analytic\nsample", n_final, "end"
   ) %>%
     mutate(delta = case_when(type == "start" ~ n, type == "end" ~ 0, TRUE ~ -n),
            remaining = cumsum(delta))
+  
+  known_issues_lab <- paste0(
+    "Known but NOT YET excluded from the primary sample above: ",
+    comma(null_lga_n), " Null-LGA rows and ", comma(dedup_ll_n),
+    " duplicate pseudo-ID rows (linelisted, both states). 03_regression.R\n",
+    "still reads 01's un-deduplicated tables — see 09_data_investigations.R Section 1."
+  )
   
   fig_3_2 <- ggplot(wf, aes(x = step)) +
     geom_rect(aes(xmin = step - 0.4, xmax = step + 0.4,
@@ -500,9 +534,9 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
     scale_y_continuous(labels = comma) +
     scale_x_continuous(breaks = NULL) +
     labs(title = "Figure 3.2.  Analytic sample construction — zero-dose model",
-         subtitle = paste0("Primary sample: ", comma(n_final), " children after all exclusions"),
+         subtitle = paste0("Primary sample: ", comma(n_final), " children after all exclusions applied by 03_regression.R"),
          x = NULL, y = "Row count",
-         caption = "Computed live from 01_linelisted_clean.rds, 03_model_a_dataset.rds and 09_data_investigations.R. Null-LGA and\nduplicate-row splits are approximations (see script comment) — 'Other / unverified' is the true residual once those are removed.") +
+         caption = paste0("Computed live from 01_linelisted_clean.rds and 03_model_a_dataset.rds.\n", known_issues_lab)) +
     theme_diss(11) +
     theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
 } else {
@@ -828,12 +862,12 @@ w5 <- extract_coef_se(ndvi_parsed, "vim_c", col = 1)
 # W6: NDVI viq anomaly, LGA+month-year FE (N2, col 2)
 w6 <- extract_coef_se(ndvi_parsed, "viq_c", col = 2)
 
-w1_n <- fb(ev(precip_parsed, "Num.Obs", 1), "NA"); w1_r2 <- fb(ev(precip_parsed, "R2 ", 1), "NA")
-w2_n <- fb(ev(precip_parsed, "Num.Obs", 4), "NA"); w2_r2 <- fb(ev(precip_parsed, "R2 ", 4), "NA")
-w3_n <- fb(ev(heat_parsed, "Num.Obs", 3), "NA");   w3_r2 <- fb(ev(heat_parsed, "R2 ", 3), "NA")
-w4_n <- fb(ev(heat_parsed, "Num.Obs", 4), "NA");   w4_r2 <- fb(ev(heat_parsed, "R2 ", 4), "NA")
-w5_n <- fb(ev(ndvi_parsed, "Num.Obs", 1), "NA");   w5_r2 <- fb(ev(ndvi_parsed, "R2 ", 1), "NA")
-w6_n <- fb(ev(ndvi_parsed, "Num.Obs", 2), "NA");   w6_r2 <- fb(ev(ndvi_parsed, "R2 ", 2), "NA")
+w1_n <- fb(ev(precip_parsed, "Num.Obs", 1), "NA"); w1_r2 <- fb(ev(precip_parsed, "R2", 1), "NA")
+w2_n <- fb(ev(precip_parsed, "Num.Obs", 4), "NA"); w2_r2 <- fb(ev(precip_parsed, "R2", 4), "NA")
+w3_n <- fb(ev(heat_parsed, "Num.Obs", 3), "NA");   w3_r2 <- fb(ev(heat_parsed, "R2", 3), "NA")
+w4_n <- fb(ev(heat_parsed, "Num.Obs", 4), "NA");   w4_r2 <- fb(ev(heat_parsed, "R2", 4), "NA")
+w5_n <- fb(ev(ndvi_parsed, "Num.Obs", 1), "NA");   w5_r2 <- fb(ev(ndvi_parsed, "R2", 1), "NA")
+w6_n <- fb(ev(ndvi_parsed, "Num.Obs", 2), "NA");   w6_r2 <- fb(ev(ndvi_parsed, "R2", 2), "NA")
 
 tab_weather <- tribble(~Spec, ~Variable, ~Measure, ~Coef_CI, ~Panel, ~FE, ~N, ~R2,
                        "W1", "Precipitation", "Monthly precipitation anomaly (% of long-term average)", ci_cell(w1$coef, w1$se), "Monthly", "LGA", w1_n, w1_r2,
@@ -902,12 +936,49 @@ a2_dist_sig_label <- if (!is.na(a2_dist_raw$coef) && !is.na(a2_dist_raw$se) &&
   "significant"
 }
 
+# BUGFIX (14/7/2026): the previous version of this tribble supplied only
+# 2 values per row (Theme, Finding) against 3 declared columns
+# (~Theme, ~Finding, ~Field). tribble() only checks that the value count
+# is a multiple of the column count, so 6 values / 3 columns silently
+# parsed as 2 misaligned rows instead of erroring — "Recordkeeping" ended
+# up in the Field column of row 1, and the Timing row was dropped
+# entirely. Rebuilt below with all 4 themes and a real Field value each.
+
+age_sig_label_41 <- if (!is.na(a1_age_raw$coef) && !is.na(a1_age_raw$se) &&
+                        abs(a1_age_raw$coef / a1_age_raw$se) > 1.96) {
+  "predicts ZD status (p < 0.05)"
+} else {
+  "does not reach significance for ZD status"
+}
+
+lag_medians_41 <- if (require_file(mb_path, "Table 4.1 lag medians")) {
+  readRDS(mb_path) %>%
+    filter(in_primary_sample, !is.na(days_since_visit), days_since_visit <= 300) %>%
+    mutate(rec = if_else(recovered_strict == 1, "Recovered", "Not recovered")) %>%
+    group_by(rec) %>% summarise(med = median(days_since_visit, na.rm = TRUE), .groups = "drop")
+} else NULL
+
+lag_txt_41 <- if (!is.null(lag_medians_41) && all(c("Recovered", "Not recovered") %in% lag_medians_41$rec)) {
+  paste0("recovered children have shorter median lag (",
+         lag_medians_41$med[lag_medians_41$rec == "Recovered"], " vs ",
+         lag_medians_41$med[lag_medians_41$rec == "Not recovered"], " days)")
+} else {
+  "median lag by recovery status — NA, check 03_model_b_dataset.rds"
+}
+
+timing_finding_41 <- paste0("Age at registration ", age_sig_label_41, "; ", lag_txt_41, ".")
+
 tab_4_1 <- tribble(~Theme, ~Finding, ~Field,
                    "Distance", paste0("Not significant under the permissive flag; ", amplification,
                                       "× larger and ", a2_dist_sig_label,
                                       " under the strict definition (β ", round(a1_dist_raw$coef, 3), " → ", round(a2_dist_raw$coef, 3), ")."),
+                   "Coordinator confirmed distance is the primary barrier at enrolment, not at follow-up.",
+                   "Timing", timing_finding_41,
+                   "Long-open cases described as qualitatively harder to close; CHW attrition noted.",
                    "Recordkeeping", paste0("Strict recovery ", strict_pooled, "% vs permissive ", permissive_pooled, "%."),
-                   "Weather", "Null across all three variables and all specifications (see weather table)."
+                   "Off-network care verbal only; card not retained. Confirmed as standard practice.",
+                   "Weather", "Null across all three variables and all specifications (see weather table).",
+                   "No programme staff named weather as a barrier in any conversation."
 )
 artifacts$tab_4_1 <- tab_4_1
 

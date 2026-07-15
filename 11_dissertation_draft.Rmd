@@ -28,92 +28,59 @@ output:
       .title { font-size: 1.7em !important; color: #10243b; }
       .subtitle { font-size: 1.1em !important; color: #555; font-style: italic; }
       caption, .caption { font-weight: bold; color: #10243b; }
+      .missing-artifact { color: #C0312D; font-weight: bold; border: 1px dashed #C0312D; padding: 0.6em 1em; background: #fdecea; }
 ---
 
 ```{r setup, include=FALSE}
 
-# 09_visualizations.Rmd
-# All thesis figures and tables, ordered by appearance in the draft
-# and grouped by section. Regression summary tables are folded into
-# the first-figure slots of each results section (3.1 and 3.5) so
-# supervisors can consult them without flipping to an appendix.
-# Created: July 2026 | Last Updated: 07/07/2026
-#
-# SIGNIFICANCE: Option 2 — 95% CIs, two-tier stars (** .05, *** .01)
-# DATA: post-fix verified July 2026 rerun; live reads where available.
+# 11_dissertation_draft.Rmd
+# Created: 14/7/2026
 
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 
-library(tidyverse)
 library(knitr)
 library(kableExtra)
-library(ggplot2)
-library(patchwork)
-library(scales)
+library(dplyr)
 
-#--- Paths ---
-home      <- "C:/Users/HP/Documents/GitHub/datharm-placement"
-mch_dir   <- file.path(home, "03_output/01_mchtrack_data")
-reg_dir   <- file.path(home, "03_output/03_regression")
-resid_dir <- file.path(home, "03_output/04_ward_residuals")
-era_dir   <- file.path(home, "03_output/06_era5_analysis")
+#--- Load the manifest, no computation --------------------------------------
+home    <- "C:/Users/HP/Documents/GitHub/datharm-placement"
+viz_dir <- file.path(home, "03_output/10_visualizations")
+manifest_path <- file.path(viz_dir, "10_artifacts.rds")
 
-#--- Helpers ---
-parse_ms_txt <- function(path) {
-  if (!file.exists(path)) return(NULL)
-  lines <- readLines(path, warn = FALSE)
-  rows  <- lines[str_detect(lines, "\\|") & !str_detect(lines,"^[+=]+$") &
-                 !str_detect(lines, "^\\+[-=+]+\\+$")]
-  map_dfr(rows, function(r){
-    cells <- str_split(r,"\\|")[[1]] %>% str_trim() %>% .[.!=""]
-    if(length(cells)>=2) tibble(term=cells[1], values=list(cells[-1])) else NULL })
+artifacts <- if (file.exists(manifest_path)) readRDS(manifest_path) else list()
+
+# Loud-failure helpers, mirroring the require_file()/placeholder_plot()
+# pattern in 10_visualizations.R — a missing figure or table shows a
+# visible red-bordered message in the knitted document rather than
+# silently falling back to an old hardcoded number.
+show_fig <- function(key) {
+  path <- artifacts[[key]]
+  if (is.null(path) || !file.exists(path)) {
+    cat(paste0('<p class="missing-artifact">MISSING FIGURE — \'', key,
+               "' not found in 10_artifacts.rds. Rerun 09_data_investigations.R ",
+               "and 10_visualizations.R, then re-knit.</p>"))
+  } else {
+    knitr::include_graphics(path)
+  }
 }
-ev <- function(p,l,c=1){ if(is.null(p)) return(NA_character_)
-  row<-p%>%filter(str_detect(term,fixed(l)))
-  if(nrow(row)==0||length(row$values[[1]])<c) return(NA_character_)
-  str_trim(row$values[[1]][c]) }
-fb <- function(a,b) if(is.null(a)||is.na(a)||a=="") b else a
-star2 <- function(coef,se){ t<-abs(coef/se); if(t>2.576)"***" else if(t>1.96)"**" else "" }
-ci_cell <- function(coef,se){ st<-star2(coef,se)
-  lo<-round(coef-1.96*se,3); hi<-round(coef+1.96*se,3)
-  paste0(formatC(coef,format="f",digits=3),st,
-         "<br><small style='color:#777;font-style:normal'>[",lo,", ",hi,"]</small>") }
-
-#--- Coefficients (post-fix) ---
-a1_dist<-ci_cell(0.043,0.023); a2_dist<-ci_cell(0.627,0.199)
-a1_age <-ci_cell(0.003,0.001); a2_age <-ci_cell(0.061,0.008)
-a1_sex <-ci_cell(0.041,0.032); a2_sex <-ci_cell(0.040,0.039)
-b1_sms <-ci_cell(0.444,0.145); b1_dist<-ci_cell(-0.051,0.061)
-b1_age <-ci_cell(-0.005,0.003); b1_lag<-ci_cell(-0.001,0.001)
-mb<-parse_ms_txt(file.path(reg_dir,"02_model_b_tracing_effectiveness.txt"))
-b_n<-fb(ev(mb,"Num.Obs",1),"16,132"); b_r2<-fb(ev(mb,"R2 ",1),"0.117")
-
-#--- Colours ---
-col_sig<-"#1D6FA4"; col_nonsig<-"#B0B0B0"; col_strict<-"#BA7517"
-pal_state<-c("Kano"="#1D6FA4","Katsina"="#BA7517")
-pal_zd<-c("Zero-dose"="#C0312D","Vaccinated"="#5A9FD4")
-col_confirmed<-"#1D9E75"; col_offnet<-"#F4A261"; col_notrec<-"#C0312D"
-
-#--- Theme ---
-theme_diss <- function(bs=12){
-  theme_minimal(base_size=bs) %+replace% theme(
-    text=element_text(family="serif"),
-    plot.title=element_text(face="bold",size=bs,hjust=0,margin=margin(b=4)),
-    plot.subtitle=element_text(size=bs-2,colour="#666",hjust=0,margin=margin(b=10)),
-    plot.caption=element_text(size=9,colour="#888",hjust=0,margin=margin(t=8),lineheight=1.1),
-    axis.title=element_text(size=bs-1), axis.text=element_text(size=bs-1,colour="#333"),
-    panel.grid.major.y=element_blank(),
-    panel.grid.major.x=element_line(colour="#e5e5e5",linewidth=0.4),
-    panel.grid.minor=element_blank(), legend.position="top", legend.title=element_blank()) }
+show_tab <- function(key) {
+  df <- artifacts[[key]]
+  if (is.null(df)) {
+    cat(paste0('<p class="missing-artifact">MISSING TABLE — \'', key,
+               "' not found in 10_artifacts.rds. Rerun 09_data_investigations.R ",
+               "and 10_visualizations.R, then re-knit.</p>"))
+    return(invisible(NULL))
+  }
+  df
+}
 
 # Force English locale so all rendered dates use the Western Gregorian
 # calendar with English month names rather than the machine's Thai default.
 # Try platform-specific English locale names in order; the first that works wins.
 suppressWarnings({
-  ok <- FALSE
   for (loc in c("English", "en_US.UTF-8", "en_GB.UTF-8", "en_US", "C")) {
     if (!inherits(try(Sys.setlocale("LC_TIME", loc), silent = TRUE), "try-error")) {
-      if (Sys.getlocale("LC_TIME") != "") { ok <- TRUE; break }
+      if (Sys.getlocale("LC_TIME") != "") break
     }
   }
 })
@@ -123,11 +90,11 @@ suppressWarnings({
 
 ## A. The zero-dose problem in Nigeria and the Sahel
 
-An estimated 14.3 million children worldwide had received no routine vaccinations in 2024 (WHO/UNICEF, 2024). Sub-Saharan Africa carries the largest share of this burden, accounting for over half of the world’s zero-dose children (GBD 2023 Vaccine Coverage Collaborators, 2025). Nigeria alone holds roughly 2.1 million zero-dose children, the highest number for any single country (WHO/UNICEF, 2024), with the northern states of Kano and Katsina among the most affected (NPHCDA, 2022).
+An estimated 14.3 million children worldwide had received no routine vaccinations in 2024 (WHO/UNICEF, 2024). Sub-Saharan Africa carries the largest share of this burden, accounting for over half of the world's zero-dose children (GBD 2023 Vaccine Coverage Collaborators, 2025). Nigeria alone holds roughly 2.1 million zero-dose children, the highest number for any single country (WHO/UNICEF, 2024), with the northern states of Kano and Katsina among the most affected (NPHCDA, 2022).
 
 The Sahel, the semi-arid belt stretching from Senegal to Sudan, faces a distinct and compounding set of pressures. Sabahelzain et al. (2025) describe a region marked simultaneously by environmental crisis, including drought, desertification and food insecurity, and by escalating armed conflict, with a wave of military takeovers across Burkina Faso, Mali, Chad, Niger and Sudan since 2021. In 2023, the proportion of zero-dose children in Sudan reached 43 per cent, with Mali at 22 per cent and Chad at 16 per cent (Sabahelzain et al., 2025). Compounding these challenges, vaccination coverage estimates in the region rely heavily on outdated census projections, with the last full census in Sudan and Chad conducted in 2008 and 2009 respectively, and large nomadic, displaced and conflict-affected populations remaining effectively invisible to routine data systems (Sabahelzain et al., 2025).
 
-Distrust in immunisation programmes has its own long history in this region. The boycott of the polio vaccine across several northern Nigerian states, beginning in 2003 and lasting into the following year, was rooted in political tension between the country’s Muslim north and Christian south and amplified by rumours linking vaccination to sterility and HIV transmission. The boycott delayed polio eradication in Nigeria by years and seeded suspicion that persists in various forms today (Jegede, 2007; Ghinai et al., 2013). Sabahelzain et al. (2025) note that the resurgence of armed groups in the same northern Nigerian corridor, alongside similar movements in the Sahel’s tri-border region between Burkina Faso, Mali and Niger, creates renewed conditions for vaccine scepticism layered on top of existing access barriers.
+Distrust in immunisation programmes has its own long history in this region. The boycott of the polio vaccine across several northern Nigerian states, beginning in 2003 and lasting into the following year, was rooted in political tension between the country's Muslim north and Christian south and amplified by rumours linking vaccination to sterility and HIV transmission. The boycott delayed polio eradication in Nigeria by years and seeded suspicion that persists in various forms today (Jegede, 2007; Ghinai et al., 2013). Sabahelzain et al. (2025) note that the resurgence of armed groups in the same northern Nigerian corridor, alongside similar movements in the Sahel's tri-border region between Burkina Faso, Mali and Niger, creates renewed conditions for vaccine scepticism layered on top of existing access barriers.
 
 ## B. DATHARM and the MCHTrack programme
 
@@ -135,9 +102,9 @@ DATHARM, a Nigerian social-technology organisation, developed MCHTrack to addres
 
 ## C. Predictors of zero-dose status and tracing effectiveness
 
-The determinants of zero-dose status in sub-Saharan Africa are comparatively well established. A household-level analysis spanning 82 low- and middle-income countries identifies distance to a health facility, maternal education, household wealth and birth order as among the strongest predictors of zero-dose status (Farrenkopf et al., 2023). Spatial studies extend this picture geographically: in Kenya, travel time to the nearest immunising facility was shown to materially reduce the likelihood of full immunisation, with under a third of the population living within an hour’s walk of such a facility under a walking-only scenario (Joseph et al., 2020). In Niger, seasonal variation in this same travel burden, modelled through separate wet- and dry-season cost-distance surfaces, was found to influence vaccination uptake, with the wet season substantially lengthening effective travel times in riverine and low-lying areas (Blanford et al., 2012).
+The determinants of zero-dose status in sub-Saharan Africa are comparatively well established. A household-level analysis spanning 82 low- and middle-income countries identifies distance to a health facility, maternal education, household wealth and birth order as among the strongest predictors of zero-dose status (Farrenkopf et al., 2023). Spatial studies extend this picture geographically: in Kenya, travel time to the nearest immunising facility was shown to materially reduce the likelihood of full immunisation, with under a third of the population living within an hour's walk of such a facility under a walking-only scenario (Joseph et al., 2020). In Niger, seasonal variation in this same travel burden, modelled through separate wet- and dry-season cost-distance surfaces, was found to influence vaccination uptake, with the wet season substantially lengthening effective travel times in riverine and low-lying areas (Blanford et al., 2012).
 
-Defaulter tracing and recovery, the second pillar of this thesis, has received comparatively less direct attention in the African literature. The most directly comparable evidence comes from outside Africa. Using a provincial electronic immunisation registry covering 8.8 million children in Sindh, Pakistan, Miraj et al. (2024) found that over ninety per cent of children defaulted on at least one scheduled vaccine, though the great majority were eventually recovered through supplementary outreach. Counterintuitively, children in remote rural areas and those born at home, despite higher overall default rates, were less likely to remain permanently uncovered than children in urban areas or those enrolled through fixed health facilities, a pattern the authors attribute to outreach and catch-up campaigns disproportionately reaching the most marginalised groups (Miraj et al., 2024). This reversal of an otherwise intuitive relationship between deprivation and recovery offers a useful precedent for interpreting comparable reversals within this thesis’s own tracing data.
+Defaulter tracing and recovery, the second pillar of this thesis, has received comparatively less direct attention in the African literature. The most directly comparable evidence comes from outside Africa. Using a provincial electronic immunisation registry covering 8.8 million children in Sindh, Pakistan, Miraj et al. (2024) found that over ninety per cent of children defaulted on at least one scheduled vaccine, though the great majority were eventually recovered through supplementary outreach. Counterintuitively, children in remote rural areas and those born at home, despite higher overall default rates, were less likely to remain permanently uncovered than children in urban areas or those enrolled through fixed health facilities, a pattern the authors attribute to outreach and catch-up campaigns disproportionately reaching the most marginalised groups (Miraj et al., 2024). This reversal of an otherwise intuitive relationship between deprivation and recovery offers a useful precedent for interpreting comparable reversals within this thesis's own tracing data.
 
 ## D. Weather and health-seeking behaviour
 
@@ -145,13 +112,13 @@ The relationship between weather and vaccination has been studied directly in on
 
 The first systematic test of this relationship in sub-Saharan Africa came from Nagata et al. (2021), who linked Demographic and Health Survey data from 137,379 children across twenty-two countries to thirty-year rainfall records, defining drought as annual precipitation below the fifteenth historical percentile. Drought at birth was associated with small but consistent reductions in BCG, DPT and polio vaccination, with the strongest effects closest in time to the drought itself. The authors note explicitly that, prior to their study, no empirical research had rigorously examined this relationship at all, with the existing evidence limited to anecdotal case reports such as a measles vaccination rate of 47 per cent recorded during the 1983 to 1985 drought in Timbuktu, Mali (Nagata et al., 2021, citing Carnell and Guyon, 1990).
 
-A conceptually related but mechanistically distinct literature addresses climate-induced displacement rather than weather variation itself. Haque, Parr and Muhidin (2019) compared healthcare-seeking behaviour among parents permanently displaced by flooding and riverbank erosion in mainland Bangladesh against otherwise similar non-displaced households, finding that displaced parents were markedly less likely to seek care outside the home for a sick child, and far less likely to use a trained provider when they did seek care, despite their children falling ill more often. The authors are careful to note that their study does not examine climate variability directly, but rather one of its downstream demographic consequences, and that the displaced population’s reduced access to trained providers and higher transport costs, not weather itself, drive the effect (Haque, Parr and Muhidin, 2019).
+A conceptually related but mechanistically distinct literature addresses climate-induced displacement rather than weather variation itself. Haque, Parr and Muhidin (2019) compared healthcare-seeking behaviour among parents permanently displaced by flooding and riverbank erosion in mainland Bangladesh against otherwise similar non-displaced households, finding that displaced parents were markedly less likely to seek care outside the home for a sick child, and far less likely to use a trained provider when they did seek care, despite their children falling ill more often. The authors are careful to note that their study does not examine climate variability directly, but rather one of its downstream demographic consequences, and that the displaced population's reduced access to trained providers and higher transport costs, not weather itself, drive the effect (Haque, Parr and Muhidin, 2019).
 
-Outside Africa, the clearest precedent for this thesis’s specific approach, linking high-frequency daily weather to a routine digital health registry, comes from Pakistan. Using over 132 million immunisation records from Sindh’s provincial electronic immunisation registry, Siddiqi et al. (2025) found that heat wave days significantly reduced immunisation delivery, with enhanced outreach activities affected most severely (21.2 per cent decline), routine outreach also substantially affected (13.6 per cent), and fixed-site delivery comparatively insulated (5.8 per cent decline). Rural divisions were disproportionately affected relative to the provincial capital. This is the only published study identified that applies registry-based, high-frequency weather analysis to childhood immunisation anywhere in the world, and it has not, at the time of writing, been extended to any African setting.
+Outside Africa, the clearest precedent for this thesis's specific approach, linking high-frequency daily weather to a routine digital health registry, comes from Pakistan. Using over 132 million immunisation records from Sindh's provincial electronic immunisation registry, Siddiqi et al. (2025) found that heat wave days significantly reduced immunisation delivery, with enhanced outreach activities affected most severely (21.2 per cent decline), routine outreach also substantially affected (13.6 per cent), and fixed-site delivery comparatively insulated (5.8 per cent decline). Rural divisions were disproportionately affected relative to the provincial capital. This is the only published study identified that applies registry-based, high-frequency weather analysis to childhood immunisation anywhere in the world, and it has not, at the time of writing, been extended to any African setting.
 
 A separate and much older literature addresses weather and scheduled healthcare attendance outside the immunisation context entirely, concentrated almost exclusively in high-income settings. Samano et al. (2021) linked thirty years of heat index and precipitation data to an HIV clinic registry in Miami, finding that extreme precipitation increased the relative risk of a missed appointment by thirteen per cent, with extreme heat showing a comparable significant association, using a case-crossover design that controlled for day-of-week effects. The same authors note, however, that theirs was the first published study of its kind, built on their own earlier conference presentations rather than an existing body of comparable work (Samano et al., 2021). The wider literature on missed primary care appointments in the United Kingdom, by contrast, treats weather largely as a self-reported, qualitative reason offered by patients in surveys, rather than as a variable tested quantitatively against objective meteorological data (Parsons, Bryce and Atherton, 2021).
 
-A different population entirely is captured by Fritz (2022), who linked Indonesia’s national health insurance claims to daily district-level meteorological data. The paper found that hot days increased visits for diabetes by up to 29 per cent and for cardiovascular disease by up to 19 per cent, with no comparable effect on respiratory disease. This finding, while methodologically close to the approach taken in this thesis, operates through the opposite causal mechanism: heat here exacerbates an existing chronic condition and increases demand for care, rather than deterring a discretionary preventive visit. Furthermore, the study’s adult, insured, chronic-disease population bears little resemblance to the paediatric, uninsured, routine-immunisation context this thesis examines.
+A different population entirely is captured by Fritz (2022), who linked Indonesia's national health insurance claims to daily district-level meteorological data. The paper found that hot days increased visits for diabetes by up to 29 per cent and for cardiovascular disease by up to 19 per cent, with no comparable effect on respiratory disease. This finding, while methodologically close to the approach taken in this thesis, operates through the opposite causal mechanism: heat here exacerbates an existing chronic condition and increases demand for care, rather than deterring a discretionary preventive visit. Furthermore, the study's adult, insured, chronic-disease population bears little resemblance to the paediatric, uninsured, routine-immunisation context this thesis examines.
 
 This thesis sits at the intersection of three bodies of evidence reviewed above. The determinants of zero-dose status are well studied across sub-Saharan Africa, but rarely examined through the kind of routine, high-frequency programme data that MCHTrack generates. Defaulter tracing is widely practised, yet its actual effectiveness, as distinct from what is reported, is seldom tested against the underlying records. Weather and health-seeking behaviour have been linked in a handful of disconnected settings, but never in the Sahel, and never against immunisation specifically. MCHTrack offers a chance to address all three gaps from a single dataset, and to ask what such a dataset can and cannot reveal once examined closely.
 
@@ -171,80 +138,27 @@ Answering the first two questions set out above requires individual-level record
 
 ## A. MCHTrack data structure
 
-Before a child’s record exists in MCHTrack, vaccination in Kano and Katsina ordinarily follows a simpler path. A caregiver becomes aware a child is due a dose, through a community health worker’s house-to-house visit, a reminder from an earlier facility encounter, or word of mouth at a routine gathering, then either travels to a facility or waits for an outreach visit. The dose, once given, is recorded on a paper card kept by the family, the primary record of a child’s vaccination history across most of Nigeria, MCHTrack included.
+Before a child's record exists in MCHTrack, vaccination in Kano and Katsina ordinarily follows a simpler path. A caregiver becomes aware a child is due a dose, through a community health worker's house-to-house visit, a reminder from an earlier facility encounter, or word of mouth at a routine gathering, then either travels to a facility or waits for an outreach visit. The dose, once given, is recorded on a paper card kept by the family, the primary record of a child's vaccination history across most of Nigeria, MCHTrack included.
 
 MCHTrack sits alongside this process rather than replacing it. Community health workers carry tablets and, during house-to-house enumeration, identify children who appear to have missed scheduled doses, entering them as zero-dose in the linelisted dataset at the point of enrolment. A subset are confirmed and logged in the identified zero-dose dataset, which also records the stated reason for non-vaccination where available. Once flagged, a referral is generated, and any subsequent vaccination encounter, fixed-site or outreach, is logged in the facility visits dataset. If a flagged child does not appear there within an expected window, a tracing attempt is triggered and logged in the defaulter tracing dataset, recording contact method, date, and outcome.
 
 ```{r fig-2-1, fig.height=4.2, fig.width=8.6, dpi=150}
-
-boxes <- tibble(
-  label=c("Household\nenumeration","Zero-dose\nflag","Facility\nvisit","Defaulter\ntracing"),
-  dataset=c("linelisted","identifiedZD","facility_visits","defaulterTracing"),
-  x=c(1,3,5,7))
-
-ggplot() +
-  annotate("rect", xmin=0.45, xmax=7.75, ymin=-0.55, ymax=0.55,
-           fill="#EAF2FB", colour="#1D6FA4", linewidth=0.4, linetype="dashed") +
-  annotate("text", x=7.68, y=0.47, label="MCHTrack system boundary",
-           hjust=1, size=2.8, colour="#1D6FA4", fontface="italic", family="serif") +
-  geom_rect(data=boxes, aes(xmin=x-0.5, xmax=x+0.5, ymin=-0.32, ymax=0.32),
-            fill="white", colour="#333", linewidth=0.6) +
-  geom_text(data=boxes, aes(x=x, y=0.1, label=label),
-            size=3.1, fontface="bold", lineheight=0.9, family="serif") +
-  geom_text(data=boxes, aes(x=x, y=-0.18, label=dataset),
-            size=2.5, colour="#555", fontface="italic", family="serif") +
-  annotate("segment", x=c(1.55,3.55,5.55), xend=c(2.45,4.45,6.45), y=0, yend=0,
-           arrow=arrow(length=unit(0.14,"cm"),type="closed"), colour="#333", linewidth=0.5) +
-  annotate("text", x=1, y=-0.72, label="~1 in 5 households\nnot reached in enumeration",
-           size=2.5, colour="#C0312D", fontface="italic", family="serif") +
-  annotate("segment", x=1, xend=1, y=-0.32, yend=-0.5, colour="#C0312D", linewidth=0.4,
-           arrow=arrow(length=unit(0.1,"cm"),type="closed")) +
-  annotate("text", x=7, y=-0.75, label="Off-network care recorded\nverbally, cannot be verified",
-           size=2.5, colour="#BA7517", fontface="italic", family="serif") +
-  annotate("segment", x=7, xend=7, y=-0.32, yend=-0.5, colour="#BA7517", linewidth=0.4,
-           linetype="dotted", arrow=arrow(length=unit(0.1,"cm"),type="closed")) +
-  scale_x_continuous(limits=c(0.4,8.0)) + scale_y_continuous(limits=c(-0.95,0.62)) +
-  labs(title="Figure 2.1.  MCHTrack data pipeline and its structural blind spots",
-       caption="Each stage writes to one dataset. Two events fall outside the system boundary: children never enumerated, and vaccination\ndelivered off-network. Neither is recorded, and both bound what any downstream analysis can observe.") +
-  theme_void() +
-  theme(plot.title=element_text(family="serif",face="bold",size=12,margin=margin(b=6,l=2)),
-        plot.caption=element_text(family="serif",colour="#888",size=8.5,hjust=0,margin=margin(t=8,l=2),lineheight=1.1))
-
+show_fig("fig_2_1_path")
 ```
 
 <p class="note">_Four properties of this pipeline bound the analysis. Enumeration undercount (roughly one household in five, per the Kano coordinator) means every zero-dose count is a count of children found, not children who exist. Off-network care is recorded verbally but never verified, which drives the recovery gap examined in Section III.B. Both blind spots are structural, not incidental, and quantifying them is part of the thesis's contribution rather than a caveat to it._</p>
 
-Four properties of this system bear directly on what the analysis below can and cannot show. The first concerns who enters the system at all. Undercounting during household enumeration is a documented problem in Nigerian immunisation planning more broadly. The Kano project coordinator’s own estimate, that roughly one in five households are missed during MCHTrack’s enumeration rounds, sits within this same pattern. No field in MCHTrack records this gap. Every zero-dose count in this thesis is therefore a count of children found, not a count of children who exist.
+Four properties of this system bear directly on what the analysis below can and cannot show. The first concerns who enters the system at all. Undercounting during household enumeration is a documented problem in Nigerian immunisation planning more broadly. The Kano project coordinator's own estimate, that roughly one in five households are missed during MCHTrack's enumeration rounds, sits within this same pattern. No field in MCHTrack records this gap. Every zero-dose count in this thesis is therefore a count of children found, not a count of children who exist.
 
-The second concerns record reliability once a child is in the system. Katsina’s facility visits table showed 38.9 per cent duplicate records and its linelisted table 22.1 per cent, traced to a device handover that caused records to sync more than once. Affected rows were removed before any Katsina-based estimate, and Katsina results throughout rest on a smaller, corrected sample than the raw export size suggests.
+The second concerns record reliability once a child is in the system. Katsina's facility visits table showed 38.9 per cent duplicate records and its linelisted table 22.1 per cent, traced to a device handover that caused records to sync more than once. Affected rows were removed before any Katsina-based estimate, and Katsina results throughout rest on a smaller, corrected sample than the raw export size suggests.
 
 ```{r fig-2-2, fig.height=3.8, fig.width=8, dpi=150}
-
-dup <- tribble(
-  ~state,~table,~dup_pct,
-  "Kano","Linelisted",0.0, "Kano","Facility visits",0.0, "Kano","Defaulter tracing",0.0,
-  "Katsina","Linelisted",22.1, "Katsina","Facility visits",38.9, "Katsina","Defaulter tracing",0.0
-) %>% mutate(table=factor(table,levels=c("Linelisted","Facility visits","Defaulter tracing")))
-
-ggplot(dup, aes(x=table, y=dup_pct, fill=state)) +
-  geom_col(position=position_dodge(0.62), width=0.55, alpha=0.92) +
-  geom_text(aes(label=paste0(round(dup_pct,1),"%")),
-            position=position_dodge(0.62), vjust=-0.4, size=3.1,
-            fontface="bold", family="serif") +
-  scale_fill_manual(values=pal_state) +
-  scale_y_continuous(limits=c(0,45), labels=label_number(suffix="%"),
-                     expand=expansion(mult=c(0,0.05))) +
-  labs(title="Figure 2.2.  Duplicate record rate by state and MCHTrack table",
-       subtitle="Katsina facility visits most severely affected · all duplicates removed before analysis",
-       x=NULL, y="Duplicate rows",
-       caption="Duplication traced to a device handover causing records to sync more than once. Confirmed by the Katsina coordinator.\nKano is clean across all tables. Katsina estimates rest on a corrected sample smaller than the raw export.") +
-  theme_diss(11)
-
+show_fig("fig_2_2_path")
 ```
 
 <p class="note">Katsina's facility visits table showed 38.9% duplicate records and its linelisted table 22.1%, both traced to a device-handover sync error. Affected rows were removed before any Katsina estimate. This is the reason Katsina results throughout the thesis rest on a smaller corrected sample, and the reason the ward residuals in Figure 3.4 carry a data-quality caveat.</p>
 
-The third concerns recovery specifically. DATHARM’s stated protocol requires a community health worker to physically check a vaccination card before recording a child as recovered, but the defaulter tracing table records only that a card was checked, not which vaccine it showed or when. A successful check simply closes the case. This gap between official verification and verifiable detail is the reason a strict recovery definition and a permissive one that includes self-reported off-network care diverge as widely as they do, taken up directly in Section III.
+The third concerns recovery specifically. DATHARM's stated protocol requires a community health worker to physically check a vaccination card before recording a child as recovered, but the defaulter tracing table records only that a card was checked, not which vaccine it showed or when. A successful check simply closes the case. This gap between official verification and verifiable detail is the reason a strict recovery definition and a permissive one that includes self-reported off-network care diverge as widely as they do, taken up directly in Section III.
 
 The fourth concerns geography. A small number of LGAs, Rimi among them, showed signs of backfilled data entered retrospectively rather than at the time of the original encounter. Rimi is excluded from every primary analysis as a result, noted here so its absence from later tables is not mistaken for an oversight.
 
@@ -252,7 +166,7 @@ The fourth concerns geography. A small number of LGAs, Rimi among them, showed s
 
 Weather data is not generated by MCHTrack and is joined to it separately. Daily rainfall is drawn from CHIRPS, a satellite-and-station rainfall product gridded at roughly 5 kilometres and available daily back to 1981. Heat exposure is drawn from ERA5, a reanalysis product combining satellite and ground observations at hourly resolution, aggregated here to daily maximum and mean values. A vegetation greenness index, NDVI, is included as a proxy for agricultural conditions and indirect economic pressure on households, derived from dekadal satellite composites.
 
-All three were selected against the same criteria: daily or near-daily resolution, full coverage of Kano and Katsina across the MCHTrack study period, and a record of prior use in comparable health research. CHIRPS and ERA5-derived heat indices meet this bar most directly, both used in the two studies identified as the closest precedent for this thesis’s approach, an electronic immunisation registry in Sindh, Pakistan and an HIV clinic registry in Miami (Section I.D). NDVI is more exploratory, included on the strength of an established link between vegetation conditions and household agricultural income in Sahelian settings rather than any direct precedent in the immunisation literature itself. Each is matched to MCHTrack’s facility visits data at LGA and day level, the finest resolution at which both sides of the join are reliably available.
+All three were selected against the same criteria: daily or near-daily resolution, full coverage of Kano and Katsina across the MCHTrack study period, and a record of prior use in comparable health research. CHIRPS and ERA5-derived heat indices meet this bar most directly, both used in the two studies identified as the closest precedent for this thesis's approach, an electronic immunisation registry in Sindh, Pakistan and an HIV clinic registry in Miami (Section I.D). NDVI is more exploratory, included on the strength of an established link between vegetation conditions and household agricultural income in Sahelian settings rather than any direct precedent in the immunisation literature itself. Each is matched to MCHTrack's facility visits data at LGA and day level, the finest resolution at which both sides of the join are reliably available.
 
 ## C. Model specification and justification
 
@@ -264,7 +178,7 @@ The first question, what predicts zero-dose status, and the second, what predict
 
 Both outcomes are binary, and ordinary linear regression is poorly suited to either, since it can produce probabilities below zero or above one. Logistic regression avoids this by modelling log-odds as a linear function of the predictors. Both models were estimated using feglm() in the fixest package (Bergé, 2018), which fits the same logistic regression as base glm() but absorbs fixed effects computationally.
 
-**Fixed effects. **Nigeria’s administrative structure runs from federal level through thirty-six states, each divided into local government areas, hereafter LGAs, and each LGA further divided into wards, the smallest unit at which MCHTrack records a child’s location. Kano State alone contains 44 LGAs and 484 wards (Bwire et al., 2021), a resolution finer than most household surveys can support, since survey clusters are rarely geocoded below LGA level. It is at this ward level that the zero-dose model and recovery model apply fixed effects, a standard approach in comparable health research wherever the underlying data allows it (Johnson, 2022).
+**Fixed effects. **Nigeria's administrative structure runs from federal level through thirty-six states, each divided into local government areas, hereafter LGAs, and each LGA further divided into wards, the smallest unit at which MCHTrack records a child's location. Kano State alone contains 44 LGAs and 484 wards (Bwire et al., 2021), a resolution finer than most household surveys can support, since survey clusters are rarely geocoded below LGA level. It is at this ward level that the zero-dose model and recovery model apply fixed effects, a standard approach in comparable health research wherever the underlying data allows it (Johnson, 2022).
 
 Wards in Kano and Katsina differ systematically in baseline zero-dose rates for reasons unrelated to any individual predictor, including how thoroughly each has been enumerated. Without this, a model risks crediting ward-level differences to distance, the likeliest correlated predictor given how unevenly facilities are distributed. Both the zero-dose model and the recovery model therefore include ward-level fixed effects, giving each ward its own baseline before estimating the effect of distance, age, and the remaining covariates.
 
@@ -282,11 +196,11 @@ The recovery model is specified as:
 
 *logit(P(**Recovered = 1)) = β₀ + β₁·Method + β₂·Distance + β₃·Age + β₄·**DaysSinceVisit** + α(ward)*
 
-Of these, only distance carries comparable prior support, and evidence on recovery specifically is thin, with Miraj et al. (2024) the only direct precedent (Section I.C). Distance and age are included because the verification gap above gives reason to expect distance might matter differently once tracing is underway; a child far from a facility may be harder to enumerate in the first place, but recovery can proceed by phone or SMS without travel. Time since the last recorded visit has no precedent in this literature at all, one example of a wider gap in MCHTrack’s current fields returned to in Section V.
+Of these, only distance carries comparable prior support, and evidence on recovery specifically is thin, with Miraj et al. (2024) the only direct precedent (Section I.C). Distance and age are included because the verification gap above gives reason to expect distance might matter differently once tracing is underway; a child far from a facility may be harder to enumerate in the first place, but recovery can proceed by phone or SMS without travel. Time since the last recorded visit has no precedent in this literature at all, one example of a wider gap in MCHTrack's current fields returned to in Section V.
 
 ### ii. The weather model
 
-The third question, whether weather explains variation the first two models leave unexplained, requires a different outcome. Zero-dose status changes rarely for any child; daily facility visit counts by LGA change constantly, making them the right outcome for testing whether short-term weather predicts care-seeking independent of any child’s fixed characteristics.
+The third question, whether weather explains variation the first two models leave unexplained, requires a different outcome. Zero-dose status changes rarely for any child; daily facility visit counts by LGA change constantly, making them the right outcome for testing whether short-term weather predicts care-seeking independent of any child's fixed characteristics.
 
 The model is specified as:
 
@@ -300,34 +214,10 @@ Siddiqi et al. (2025) and Samano et al. (2021) offer the closest precedent for t
 
 This diagnostic applies specifically to the weather model, since it is the only one of the three with a count rather than binary outcome. The current specification uses log-transformed OLS, chosen for consistency with the feols() machinery and fixed-effects structure shared by the zero-dose and recovery models, and for coefficients that are directly interpretable as approximate percentage changes in visits.
 
-A negative binomial model was tested as an alternative for one specification of the precipitation variable, since visit data shaped by discrete events such as Ramadan closures and market days typically shows variance well above the mean, a pattern the variance-to-mean ratio confirms here and one that Poisson’s equal-variance assumption cannot accommodate. The two approaches agree in direction and significance for this variable, and log-transformed OLS is retained as the primary specification across all three weather variables on the grounds of consistency and interpretability rather than any indication that it performs worse.
+A negative binomial model was tested as an alternative for one specification of the precipitation variable, since visit data shaped by discrete events such as Ramadan closures and market days typically shows variance well above the mean, a pattern the variance-to-mean ratio confirms here and one that Poisson's equal-variance assumption cannot accommodate. The two approaches agree in direction and significance for this variable, and log-transformed OLS is retained as the primary specification across all three weather variables on the grounds of consistency and interpretability rather than any indication that it performs worse.
 
 ```{r fig-2-3, fig.height=3.6, fig.width=7.5, dpi=150}
-
-vm_path <- file.path(era_dir,"06_panel_daily.rds")
-if (file.exists(vm_path)) {
-  pj <- readRDS(vm_path)
-  vm <- pj %>% group_by(lga_clean) %>%
-    summarise(Mean=mean(n_visits,na.rm=TRUE), Variance=var(n_visits,na.rm=TRUE), .groups="drop")
-} else {
-  vm <- tribble(~lga_clean,~Mean,~Variance, "Gabasawa",31.9,1990.1, "Ungogo",109.9,10751.1)
-}
-vm <- vm %>% mutate(ratio=round(Variance/Mean,1))
-vm_long <- vm %>% pivot_longer(c(Mean,Variance), names_to="stat", values_to="value")
-
-ggplot(vm_long, aes(x=lga_clean, y=value, fill=stat)) +
-  geom_col(position=position_dodge(0.6), width=0.5, alpha=0.9) +
-  geom_text(data=vm, aes(x=lga_clean, y=Variance, label=paste0("V/M = ",ratio)),
-            inherit.aes=FALSE, vjust=-0.5, size=3.2, fontface="bold",
-            colour="#333", family="serif") +
-  scale_fill_manual(values=c("Mean"="#1D6FA4","Variance"="#C0312D")) +
-  scale_y_continuous(labels=comma, expand=expansion(mult=c(0,0.12))) +
-  labs(title="Figure 2.3.  Overdispersion in daily facility visit counts",
-       subtitle="Variance far exceeds the mean in both LGAs · rules out a standard Poisson specification",
-       x=NULL, y="Daily visits",
-       caption="Variance-to-mean ratios of 62 (Gabasawa) and 98 (Ungogo) confirm heavy overdispersion. Log-transformed OLS is retained\nfor consistency with the zero-dose and recovery models; a negative binomial check appears in Figure 3.10.") +
-  theme_diss(11)
-
+show_fig("fig_2_3_path")
 ```
 
 <p class="note">Daily visit counts are heavily overdispersed, with variance exceeding the mean by factors of 62 and 98. This rules out Poisson on theoretical grounds and motivates the log-transformed OLS specification used across the weather models. The diagnostic is carried forward to Figure 3.8, where the calendar structure of quiet days is shown to be social rather than environmental.</p>
@@ -344,45 +234,10 @@ Alongside the quantitative analysis, this thesis draws on conversations with DAT
 
 ### i. Descriptive overview
 
-Most children in this dataset live close to a health facility. Distance to the nearest facility is heavily right-skewed, with a median well under a kilometre and a long tail of children living considerably further out. Zero-dose children sit further along that tail than vaccinated children do, though the two distributions overlap substantially, a child can live close to a facility and still be missed. Age at registration tells a related but distinct story. Children enrolled later in MCHTrack’s coverage period are disproportionately represented among the zero-dose group, consistent with the simple mechanical fact that a child identified later has had more time to fall behind the vaccination schedule before anyone notices.
+Most children in this dataset live close to a health facility. Distance to the nearest facility is heavily right-skewed, with a median well under a kilometre and a long tail of children living considerably further out. Zero-dose children sit further along that tail than vaccinated children do, though the two distributions overlap substantially, a child can live close to a facility and still be missed. Age at registration tells a related but distinct story. Children enrolled later in MCHTrack's coverage period are disproportionately represented among the zero-dose group, consistent with the simple mechanical fact that a child identified later has had more time to fall behind the vaccination schedule before anyone notices.
 
 ```{r fig-3-1, fig.height=4.2, fig.width=8.4, dpi=150}
-
-ma_path <- file.path(reg_dir,"03_model_a_dataset.rds")
-if (file.exists(ma_path)) {
-  pm <- readRDS(ma_path) %>% filter(in_primary_sample)
-  pm <- pm %>% mutate(zd=if_else(zero_dose_penta==1,"Zero-dose","Vaccinated"),
-                      zd=factor(zd,levels=c("Zero-dose","Vaccinated")))
-} else { pm <- NULL }
-
-if (!is.null(pm)) {
-  pdist <- ggplot(pm %>% filter(hf_distance_km<=5),
-                  aes(x=hf_distance_km, fill=zd)) +
-    geom_histogram(bins=45, position="identity", alpha=0.6, colour=NA) +
-    scale_fill_manual(values=pal_zd) +
-    scale_x_continuous(labels=label_number(suffix=" km")) +
-    scale_y_continuous(labels=comma) +
-    labs(subtitle="A. Distance to health facility", x="Distance (km)", y="Children") +
-    theme_diss(11)
-  page <- ggplot(pm %>% filter(age_months_at_reg<=60),
-                 aes(x=age_months_at_reg, fill=zd)) +
-    geom_histogram(bins=40, position="identity", alpha=0.6, colour=NA) +
-    scale_fill_manual(values=pal_zd) +
-    scale_y_continuous(labels=comma) +
-    labs(subtitle="B. Age at registration", x="Age at registration (months)", y=NULL) +
-    theme_diss(11)
-  (pdist | page) +
-    plot_annotation(title="Figure 3.1.  Predictor distributions by zero-dose status",
-      subtitle="Primary analytic sample · N = 70,175 · Rimi and GPS-error distances excluded",
-      caption="Zero-dose children sit further along the distance tail and skew older at registration, though both distributions overlap\nsubstantially. A child can live close to a facility and still be missed.",
-      theme=theme(plot.title=element_text(family="serif",face="bold",size=12.5),
-                  plot.subtitle=element_text(family="serif",size=10,colour="#666"),
-                  plot.caption=element_text(family="serif",size=9,colour="#888",hjust=0,lineheight=1.1)))
-} else {
-  ggplot()+annotate("text",x=.5,y=.5,label="Requires 03_model_a_dataset.rds",
-    family="serif",size=4,colour="#888")+theme_void()
-}
-
+show_fig("fig_3_1_path")
 ```
 
 <p class="note">Estimates on the log-odds scale; 95% CIs in brackets; ward-clustered SE. Primary definition uses the MCHTrack penta-ZD flag; strict definition requires no vaccine contact of any kind. Under a 95% standard only age at registration is significant in the primary specification. Distance becomes strongly significant under the strict definition, the amplification shown in Figure 3.3. ** p < 0.05 &nbsp; *** p < 0.01</p>
@@ -390,15 +245,8 @@ if (!is.null(pm)) {
 **Table 3.1a.  Zero-dose model — regression summary**
 
 ```{r tab-3-1a}
-
-df_a <- tribble(
-  ~term, ~c1, ~c2,
-  "Distance to health facility (km)",       a1_dist, a2_dist,
-  "Age at registration (months)",           a1_age,  a2_age,
-  "Female (ref: male)",                     a1_sex,  a2_sex,
-  "<em>N</em>",                             "69,366","69,366",
-  "<em>R²</em>",                            "0.061", "0.220"
-)
+df_a <- show_tab("tab_3_1a")
+if (!is.null(df_a)) {
 df_a %>%
   kbl(col.names=c("","Primary definition","Strict definition"),
       align=c("l","r","r"), escape=FALSE) %>%
@@ -409,63 +257,15 @@ df_a %>%
   column_spec(1,width="26em") %>% column_spec(2:3,width="13em") %>%
   row_spec(3,extra_css="border-bottom:1px solid #ccc;") %>%
   row_spec(4:5,extra_css="font-style:italic;border-top:1px solid #ccc;")
-
+}
 ```
 
 <p class="note">Estimates on the log-odds scale; 95% CIs in brackets; ward-clustered SE. Primary definition uses the MCHTrack penta-ZD flag; strict definition requires no vaccine contact of any kind. Under a 95% standard only age at registration is significant in the primary specification. Distance becomes strongly significant under the strict definition, the amplification shown in Figure 3.3. ** p < 0.05 &nbsp; *** p < 0.01</p>
 
-The analytic sample for this model is smaller than the full enrolled population. Of 89,177 children and adults recorded across both states’ linelisted tables, restricting to children removes 19,261 rows, and a further set is dropped for missing or implausible distance values, including a small number of GPS-error cases where recorded distance exceeded 100 kilometres and was treated as unreliable, and for residence in Rimi LGA, excluded throughout this thesis for the backfill issue described in Section II.A. The resulting primary sample used in the regression below is 73,240 children. This narrowing is not necessarily random. A household enumerated incompletely is plausibly also a household whose distance or location data was recorded incompletely, which would tend to bias the analytic sample toward more thoroughly documented cases rather than a representative cross-section of all enrolled children.
+The analytic sample for this model is smaller than the full enrolled population. Of 89,177 children and adults recorded across both states' linelisted tables, restricting to children removes 19,261 rows, and a further set is dropped for missing or implausible distance values, including a small number of GPS-error cases where recorded distance exceeded 100 kilometres and was treated as unreliable, and for residence in Rimi LGA, excluded throughout this thesis for the backfill issue described in Section II.A. The resulting primary sample used in the regression below is 73,240 children. This narrowing is not necessarily random. A household enumerated incompletely is plausibly also a household whose distance or location data was recorded incompletely, which would tend to bias the analytic sample toward more thoroughly documented cases rather than a representative cross-section of all enrolled children.
 
 ```{r fig-3-2, fig.height=4.4, fig.width=8.4, dpi=150}
-
-wf <- tribble(
-  ~step,~label,~n,~type,
-  1,"Full linelisted\n(both states)",101312,"start",
-  2,"Women\nexcluded",20891,"exclude",
-  3,"Missing / implausible\ndistance",2230,"exclude",
-  4,"Rimi LGA\n(backfill)",7161,"exclude",
-  5,'"Null" LGA\n(unattributed)',1061,"exclude",
-  6,"Duplicate\npseudo-IDs",1953,"exclude",
-  7,"Primary analytic\nsample",69366,"end"
-) %>% mutate(
-  remaining=c(101312, 80421, 78191, 71030, 69969, 68016, 69366),
-  x=step)
-# fix cumulative for display
-wf$remaining <- c(101312,
-                  101312-20891,
-                  101312-20891-2230,
-                  101312-20891-2230-7161,
-                  101312-20891-2230-7161-1061,
-                  101312-20891-2230-7161-1061-1953,
-                  69366)
-
-ggplot(wf, aes(x=x)) +
-  geom_rect(aes(xmin=x-0.4, xmax=x+0.4,
-                ymin=if_else(type=="exclude",remaining,0),
-                ymax=if_else(type=="exclude",remaining+n,remaining),
-                fill=type), colour="white", linewidth=0.3) +
-  # Start/end bars: white label centred inside (bars are tall enough)
-  geom_text(data=~subset(.x, type!="exclude"),
-            aes(y=remaining/2, label=comma(n)), size=2.9, fontface="bold",
-            colour="white", family="serif") +
-  # Excluded bars: dark label ABOVE the bar top, never inside the thin column
-  geom_text(data=~subset(.x, type=="exclude"),
-            aes(y=remaining+n+2600, label=paste0("\u2212",comma(n))),
-            size=2.6, fontface="bold", colour="#C0312D", family="serif") +
-  geom_text(aes(y=-4200, label=label), size=2.3, lineheight=0.9,
-            colour="#333", family="serif") +
-  scale_fill_manual(values=c("start"="#1D6FA4","exclude"="#C0312D","end"="#1D9E75"),
-                    labels=c("start"="Starting N","exclude"="Excluded","end"="Analytic sample"),
-                    guide=guide_legend(reverse=TRUE)) +
-  scale_y_continuous(labels=comma, limits=c(-8500,112000)) +
-  scale_x_continuous(breaks=NULL) +
-  labs(title="Figure 3.2.  Analytic sample construction — zero-dose model",
-       subtitle="Primary sample: 69,366 children across 9 LGAs after all exclusions",
-       x=NULL, y="Row count",
-       caption="Figures from the verified July 2026 pipeline rerun. Exclusions are sequential. This narrowing is not necessarily random:\nincompletely enumerated households are plausibly also those with incomplete distance data, biasing toward better-documented cases.") +
-  theme_diss(11) +
-  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
-
+show_fig("fig_3_2_path")
 ```
 
 <p class="note">Of 101,312 linelisted rows across both states, restricting to children, dropping missing or implausible distances (including GPS-error cases above 100 km), and removing Rimi, the unattributed "Null" LGA, and duplicate registrations leaves a primary sample of 69,366. The narrowing is plausibly non-random in a way that biases toward more thoroughly documented children, a limitation carried into the interpretation of every zero-dose estimate.</p>
@@ -475,114 +275,24 @@ ggplot(wf, aes(x=x)) +
 Distance to the nearest health facility is a significant predictor of zero-dose status in the primary specification (β = 0.043, p = 0.043), consistent with its established role across the literature reviewed in Section I.C. Age at registration is also significant (β = 0.003, p = 0.006), with older children at registration more likely to be zero-dose. Gender shows no effect in any specification (β = 0.035, not significant), a null result that itself contrasts with parts of the DHS-based literature reporting gender effects in northern Nigeria, and may reflect how children come to be enrolled in MCHTrack in the first place rather than the absence of a true effect.
 
 ```{r fig-3-3, fig.height=5.4, fig.width=8.4, dpi=150}
-
-coef_a <- tribble(~label,~estimate,~se,
-  "Distance to\nhealth facility (km)",0.043,0.023,
-  "Age at registration\n(months)",0.003,0.001,
-  "Female\n(ref: male)",0.041,0.032) %>%
-  mutate(ci_lo=estimate-1.96*se, ci_hi=estimate+1.96*se,
-         sig=abs(estimate/se)>1.96, star=map2_chr(estimate,se,star2),
-         label=fct_rev(fct_inorder(label)))
-
-pA <- ggplot(coef_a, aes(x=estimate,y=label)) +
-  geom_vline(xintercept=0,linetype="dashed",colour="#aaa",linewidth=0.6) +
-  geom_errorbarh(aes(xmin=ci_lo,xmax=ci_hi,colour=sig),height=0.15,linewidth=0.9) +
-  geom_point(aes(fill=sig),shape=21,size=3.6,stroke=0.8,colour="white") +
-  geom_text(aes(x=ci_hi+0.004,label=paste0(formatC(estimate,format="f",digits=3),
-            if_else(sig,star," n.s."))),hjust=0,size=3.0,family="serif",colour="#333") +
-  scale_colour_manual(values=c("TRUE"=col_sig,"FALSE"=col_nonsig),guide="none") +
-  scale_fill_manual(values=c("TRUE"=col_sig,"FALSE"="#d5d5d5"),guide="none") +
-  scale_x_continuous(limits=c(-0.03,0.13),breaks=seq(-0.02,0.08,0.02)) +
-  labs(subtitle="A. Primary specification (all predictors)",x="Coefficient (log-odds)",y=NULL) +
-  theme_diss(11)+theme(axis.text.y=element_text(lineheight=0.9))
-
-coef_b <- tribble(~definition,~estimate,~se,
-  "Primary\n(penta-ZD flag)",0.043,0.023,
-  "Strict\n(no vaccine at all)",0.627,0.199) %>%
-  mutate(ci_lo=estimate-1.96*se, ci_hi=estimate+1.96*se,
-         sig=abs(estimate/se)>1.96, star=map2_chr(estimate,se,star2),
-         definition=fct_rev(fct_inorder(definition)))
-
-pB <- ggplot(coef_b, aes(x=estimate,y=definition)) +
-  geom_vline(xintercept=0,linetype="dashed",colour="#aaa",linewidth=0.6) +
-  geom_errorbarh(aes(xmin=ci_lo,xmax=ci_hi,colour=sig),height=0.12,linewidth=1.0) +
-  geom_point(aes(fill=sig),shape=21,size=4.4,stroke=0.9,colour="white") +
-  geom_text(aes(x=ci_hi+0.03,label=paste0("β = ",formatC(estimate,format="f",digits=3),
-            if_else(sig,star," n.s."))),hjust=0,size=3.2,family="serif",
-            fontface="bold",colour="#333") +
-  annotate("text",x=0.34,y=1.62,label="14.6× amplification",size=3.2,
-           family="serif",fontface="italic",colour="#666") +
-  annotate("segment",x=0.10,xend=0.60,y=1.5,yend=1.5,colour="#888",linewidth=0.4,
-           arrow=arrow(length=unit(0.12,"cm"),type="closed")) +
-  scale_colour_manual(values=c("TRUE"=col_strict,"FALSE"=col_nonsig),guide="none") +
-  scale_fill_manual(values=c("TRUE"=col_strict,"FALSE"="#d5d5d5"),guide="none") +
-  scale_x_continuous(limits=c(-0.05,1.25),breaks=seq(0,1.0,0.25)) +
-  labs(subtitle="B. Distance coefficient by zero-dose definition",
-       x="Coefficient on distance (log-odds)",y=NULL) +
-  theme_diss(11)+theme(axis.text.y=element_text(lineheight=0.9))
-
-(pA/pB) + plot_annotation(
-  title="Figure 3.3.  Zero-dose model — primary specification and definitional amplification",
-  subtitle="95% confidence intervals · LGA fixed effects · Ward-clustered SE · N = 69,366",
-  caption="Panel A: blue = significant at p < 0.05. Panel B: amber = significant at p < 0.01; grey = not significant.\nUnder the primary flag, distance does not reach significance. Under the strict definition it is roughly fourteen times larger.",
-  theme=theme(plot.title=element_text(family="serif",face="bold",size=12.5),
-              plot.subtitle=element_text(family="serif",size=10,colour="#666"),
-              plot.caption=element_text(family="serif",size=9,colour="#888",hjust=0,lineheight=1.1)))
-
+show_fig("fig_3_3_path")
 ```
 
 <p class="note">Age at registration is the only significant predictor under the primary definition; distance is positive but not significant (95% CI [−0.002, 0.088]). Panel B is the central RQ1 result: restricting the outcome to complete non-contact raises the distance coefficient roughly fourteen-fold. The choice of definition determines what the predictor can reveal.</p>
 
-A robustness check using a stricter definition of zero-dose, no vaccine contact recorded at all rather than a missed first dose specifically, sharpens this picture considerably. Under this stricter definition the distance coefficient rises to 0.598 (p < 0.001), roughly fourteen times larger than in the primary specification. This gap is itself informative. A child who has received some vaccine, perhaps BCG or an early oral dose, but then fallen off the schedule has already demonstrated some capacity to reach a facility at least once, so whatever drives their zero-dose status under the primary definition is more likely timing, a missed appointment, a stockout, a family’s shifting priorities, than distance itself. A child with no recorded contact at all is a cleaner test of pure physical access, and it is here that distance shows its strongest effect. The primary and stricter definitions are best understood as describing two different populations rather than two estimates of the same thing, a distinction worth holding onto when interpreting either number in isolation. A state-by-distance interaction term was also tested and found not significant, so this distance effect does not appear to differ systematically between Kano and Katsina once ward-level differences are accounted for.
+A robustness check using a stricter definition of zero-dose, no vaccine contact recorded at all rather than a missed first dose specifically, sharpens this picture considerably. Under this stricter definition the distance coefficient rises to 0.598 (p < 0.001), roughly fourteen times larger than in the primary specification. This gap is itself informative. A child who has received some vaccine, perhaps BCG or an early oral dose, but then fallen off the schedule has already demonstrated some capacity to reach a facility at least once, so whatever drives their zero-dose status under the primary definition is more likely timing, a missed appointment, a stockout, a family's shifting priorities, than distance itself. A child with no recorded contact at all is a cleaner test of pure physical access, and it is here that distance shows its strongest effect. The primary and stricter definitions are best understood as describing two different populations rather than two estimates of the same thing, a distinction worth holding onto when interpreting either number in isolation. A state-by-distance interaction term was also tested and found not significant, so this distance effect does not appear to differ systematically between Kano and Katsina once ward-level differences are accounted for.
 
 ### iii. Ward-level residuals: a limit, not a targeting signal
 
-The regression’s ward-level fixed effects can also be examined directly, as residuals showing which wards have more or fewer zero-dose children than the model predicts once distance, age, and gender are accounted for. In Katsina, this exercise identifies several wards with large positive residuals, led by Wagini in Safana LGA at 59.5 percentage points above prediction, Babban Duhu B in the same LGA at 51.5 points, and three further wards across Mani and Funtua LGAs each exceeding 20 points. In Kano, by contrast, the largest residual found, in Maraku ward, Gabasawa LGA, reaches only 13.2 points, and the overall spread across Kano’s wards is markedly flatter.
+The regression's ward-level fixed effects can also be examined directly, as residuals showing which wards have more or fewer zero-dose children than the model predicts once distance, age, and gender are accounted for. In Katsina, this exercise identifies several wards with large positive residuals, led by Wagini in Safana LGA at 59.5 percentage points above prediction, Babban Duhu B in the same LGA at 51.5 points, and three further wards across Mani and Funtua LGAs each exceeding 20 points. In Kano, by contrast, the largest residual found, in Maraku ward, Gabasawa LGA, reaches only 13.2 points, and the overall spread across Kano's wards is markedly flatter.
 
 ```{r fig-3-4, fig.height=6.0, fig.width=8.6, dpi=150}
-
-wr_path <- file.path(resid_dir,"04_ward_residuals_classified.csv")
-if (file.exists(wr_path)) { wr <- read_csv(wr_path, show_col_types=FALSE) } else {
-  wr <- tribble(~state,~lga_name,~facility_ward,~n_children,~zd_observed_pct,~zd_fitted_pct,~residual,
-    "Katsina","Safana LGA","Wagini",37,75.7,16.2,59.5,
-    "Katsina","Safana LGA","Babban Duhu B",80,67.5,16.0,51.5,
-    "Katsina","Mani LGA","Kurfeji",42,88.1,41.3,46.8,
-    "Katsina","Funtua LGA","Makera",351,55.3,17.8,37.5,
-    "Katsina","Mani LGA","Duwan Makau",41,68.3,40.4,27.9,
-    "Katsina","Batagarawa LGA","Bakiyawa",378,54.2,28.9,25.3,
-    "Katsina","Katsina LGA","Yamma 2",79,62.0,36.8,25.2,
-    "Katsina","Funtua LGA","Maigamji",582,39.2,18.2,21.0,
-    "Katsina","Mani LGA","Doro",66,59.1,40.5,18.6,
-    "Katsina","Katsina LGA","Yamma 1",64,54.7,36.9,17.8,
-    "Katsina","Baure LGA","Hui",149,20.8,3.7,17.1,
-    "Kano","Gabasawa LGA","Maraku",89,22.5,9.3,13.2)
-}
-dup_lgas <- c("Funtua LGA","Mani LGA","Safana LGA","Batagarawa LGA","Katsina LGA","Baure LGA")
-wr_top <- wr %>% slice_max(residual,n=12) %>%
-  mutate(ward_lab=paste0(facility_ward,"  (",str_remove(lga_name," LGA"),", ",str_sub(state,1,3),")"),
-         ward_lab=fct_reorder(ward_lab,residual),
-         provisional=state=="Katsina"&lga_name%in%dup_lgas,
-         flag_lab=if_else(provisional,"Katsina, duplication-affected list","Not flagged"))
-
-ggplot(wr_top, aes(x=residual,y=ward_lab)) +
-  geom_segment(aes(x=0,xend=residual,y=ward_lab,yend=ward_lab),colour="#ddd",linewidth=0.5) +
-  geom_point(aes(fill=flag_lab,size=n_children),shape=21,stroke=0.7,colour="white") +
-  geom_text(aes(x=residual+1.4,label=paste0("+",formatC(residual,format="f",digits=1)," pp")),
-            hjust=0,size=2.9,family="serif",colour="#555") +
-  scale_fill_manual(values=c("Katsina, duplication-affected list"="#C0312D","Not flagged"="#1D6FA4")) +
-  scale_size_continuous(range=c(2.5,7),guide="none") +
-  scale_x_continuous(limits=c(0,72),breaks=seq(0,60,20),labels=label_number(suffix=" pp")) +
-  labs(title="Figure 3.4.  Ward-level residuals from the zero-dose model",
-       subtitle="Observed minus predicted ZD rate · top 12 wards · dot size = enrolled children",
-       x="Residual above model prediction (percentage points)",y=NULL,
-       caption="Residuals from the primary specification. Red points fall in Katsina LGAs on the duplication-affected facility list (Fig 2.2)\nand may reflect recording artefacts rather than genuine unmet need. The one Kano ward (Maraku) reaches only +13.2 pp.") +
-  theme_diss(11)+theme(axis.text.y=element_text(size=9))
-
+show_fig("fig_3_4_path")
 ```
 
 <p class="note">The largest residuals concentrate almost entirely in Katsina, led by Wagini (+59.5 pp) and Babban Duhu B (+51.5 pp). Most fall in duplication-affected LGAs, so their apparent excess cannot be cleanly separated from recording artefacts. The Kano-Katsina contrast reflects differential data quality at least as much as differential need. These residuals mark where the model and the data break down, not a verified list of highest-need communities.</p>
 
-This contrast should not be read as evidence that Katsina has more genuine pockets of unmet need than Kano. Katsina is also the state where a device handover during data collection produced duplicate records in 38.9 per cent of facility visits, a problem documented in Section II.A and not present in Kano’s exports. A ward whose visit records were inflated or distorted by this duplication could show an artificially large residual having nothing to do with true underlying need. Kano’s flatter spread, meanwhile, may simply reflect that the state’s smaller number of LGAs and more even data quality leave less room for any single ward to stand out, rather than indicating its zero-dose burden is genuinely more uniform. The Gabasawa outlier is a useful test case for this ambiguity. Gabasawa recurs elsewhere in this project’s fieldwork as a ward of interest, and a 13.2 point residual sitting in Kano’s otherwise clean data carries more interpretive weight than any single Katsina figure, precisely because it cannot be dismissed as a duplication artefact. Whether it reflects genuine localised need or some other Kano-specific factor not captured by the model is a question this analysis can raise but not settle.
+This contrast should not be read as evidence that Katsina has more genuine pockets of unmet need than Kano. Katsina is also the state where a device handover during data collection produced duplicate records in 38.9 per cent of facility visits, a problem documented in Section II.A and not present in Kano's exports. A ward whose visit records were inflated or distorted by this duplication could show an artificially large residual having nothing to do with true underlying need. Kano's flatter spread, meanwhile, may simply reflect that the state's smaller number of LGAs and more even data quality leave less room for any single ward to stand out, rather than indicating its zero-dose burden is genuinely more uniform. The Gabasawa outlier is a useful test case for this ambiguity. Gabasawa recurs elsewhere in this project's fieldwork as a ward of interest, and a 13.2 point residual sitting in Kano's otherwise clean data carries more interpretive weight than any single Katsina figure, precisely because it cannot be dismissed as a duplication artefact. Whether it reflects genuine localised need or some other Kano-specific factor not captured by the model is a question this analysis can raise but not settle.
 
 Taken together, the two states illustrate a limit of ward-level analysis built on routine programme data rather than a usable targeting map. The state with the most visually striking residuals is also the state whose underlying records are least trustworthy at this resolution, and the state whose records are most trustworthy shows too little variation to act on with confidence. Any ward flagged this way is better treated as a candidate for field verification than as a confirmed allocation priority, a point returned to in Section V.
 
@@ -590,69 +300,10 @@ Taken together, the two states illustrate a limit of ward-level analysis built o
 
 ### i. Descriptive overview
 
-Tracing attempts in this dataset are resolved through a small number of contact methods, principally SMS and home visits, and the balance between the two differs sharply by state. Days since the child’s last recorded visit, the clearest available measure of how cold a lead has gone by the time a tracing attempt is made, is similarly skewed, most attempts happen relatively soon after a missed visit, but a meaningful tail stretches out considerably further, and recovered cases cluster more tightly toward the shorter end of this distribution than unrecovered ones do.
+Tracing attempts in this dataset are resolved through a small number of contact methods, principally SMS and home visits, and the balance between the two differs sharply by state. Days since the child's last recorded visit, the clearest available measure of how cold a lead has gone by the time a tracing attempt is made, is similarly skewed, most attempts happen relatively soon after a missed visit, but a meaningful tail stretches out considerably further, and recovered cases cluster more tightly toward the shorter end of this distribution than unrecovered ones do.
 
 ```{r fig-3-5, fig.height=5.4, fig.width=8.6, dpi=150}
-
-mb_path <- file.path(reg_dir,"03_model_b_dataset.rds")
-if (file.exists(mb_path)) {
-  d <- readRDS(mb_path) %>% filter(in_primary_sample, !is.na(method_sms))
-  method_out <- d %>% mutate(method=if_else(method_sms==1,"SMS / phone","Home visit"),
-    outcome=case_when(tracing_outcome=="yes_ok"~"Confirmed (in-network)",
-      tracing_outcome=="yes_off_network_care"~"Off-network (verbal)",TRUE~"Not recovered"),
-    outcome=factor(outcome,levels=c("Confirmed (in-network)","Off-network (verbal)","Not recovered"))) %>%
-    count(state,method,outcome) %>% group_by(state,method) %>% mutate(pct=n/sum(n)*100) %>% ungroup()
-  lag_d <- d %>% filter(!is.na(days_since_visit),days_since_visit<=300) %>%
-    mutate(rec=if_else(recovered_strict==1,"Recovered","Not recovered"))
-} else {
-  method_out <- tribble(~state,~method,~outcome,~pct,
-    "Kano","Home visit","Confirmed (in-network)",41.2,"Kano","Home visit","Off-network (verbal)",36.8,"Kano","Home visit","Not recovered",22.0,
-    "Kano","SMS / phone","Confirmed (in-network)",35.2,"Kano","SMS / phone","Off-network (verbal)",42.9,"Kano","SMS / phone","Not recovered",21.9,
-    "Katsina","Home visit","Confirmed (in-network)",71.5,"Katsina","Home visit","Off-network (verbal)",13.5,"Katsina","Home visit","Not recovered",15.0,
-    "Katsina","SMS / phone","Confirmed (in-network)",80.5,"Katsina","SMS / phone","Off-network (verbal)",7.5,"Katsina","SMS / phone","Not recovered",12.0) %>%
-    mutate(outcome=factor(outcome,levels=c("Confirmed (in-network)","Off-network (verbal)","Not recovered")))
-  lag_d <- NULL
-}
-
-pL <- ggplot(method_out, aes(x=method,y=pct,fill=outcome)) +
-  geom_col(width=0.62,colour="white",linewidth=0.3) +
-  geom_text(aes(label=if_else(pct>6,paste0(round(pct),"%"),"")),
-            position=position_stack(vjust=0.5),size=2.7,colour="white",
-            fontface="bold",family="serif") +
-  scale_fill_manual(values=c("Confirmed (in-network)"=col_confirmed,
-    "Off-network (verbal)"=col_offnet,"Not recovered"=col_notrec)) +
-  scale_y_continuous(labels=label_number(suffix="%"),expand=expansion(mult=c(0,0.02))) +
-  facet_wrap(~state) +
-  labs(subtitle="A. Tracing outcome by contact method",x=NULL,y="Share of attempts") +
-  theme_diss(11)
-
-if (!is.null(lag_d)) {
-  lag_meds <- lag_d %>% group_by(rec) %>%
-    summarise(med=median(days_since_visit,na.rm=TRUE),.groups="drop")
-  pR <- ggplot(lag_d, aes(x=days_since_visit,fill=rec)) +
-    geom_histogram(bins=38,position="identity",alpha=0.55,colour=NA) +
-    geom_vline(data=lag_meds, aes(xintercept=med,colour=rec),
-               linetype="dashed", linewidth=0.8) +
-    geom_text(data=lag_meds, aes(x=med,colour=rec,
-              label=paste0(rec,"\nmedian ",med," d")),
-              y=Inf, vjust=c(1.4,3.0), hjust=-0.05, size=2.7,
-              family="serif", fontface="bold", show.legend=FALSE) +
-    scale_fill_manual(values=c("Recovered"=col_confirmed,"Not recovered"=col_notrec)) +
-    scale_colour_manual(values=c("Recovered"=col_confirmed,"Not recovered"=col_notrec),guide="none") +
-    scale_y_continuous(labels=comma) +
-    labs(subtitle="B. Days since last visit, by recovery",
-         x="Days since last facility visit",y="Attempts") + theme_diss(11)
-} else {
-  pR <- ggplot()+annotate("text",x=.5,y=.5,family="serif",size=3.2,colour="#888",
-    label="Panel B requires 03_model_b_dataset.rds\n(median lag: recovered 46 d, not recovered 56 d)")+theme_void()
-}
-
-(pL | pR) + plot_layout(widths=c(1.25,1)) +
-  plot_annotation(title="Figure 3.5.  Tracing outcomes and timing",
-    caption="Panel A: outcomes as share of attempts within each method and state. Panel B: lag-time subset (16,528 records).\nIn Katsina most attempts end in confirmed recovery; in Kano a large share resolve as unverified off-network care.",
-    theme=theme(plot.title=element_text(family="serif",face="bold",size=12.5),
-                plot.caption=element_text(family="serif",size=9,colour="#888",hjust=0,lineheight=1.1)))
-
+show_fig("fig_3_5_path")
 ```
 
 <p class="note">Outcome: confirmed in-network return (<em>yes_ok</em> only). Log-odds scale, 95% CIs, LGA-clustered SE. SMS contact is the only significant predictor; distance, age, and lag time are null. The lag-time subset is restricted to records with a prior facility visit date and likely over-represents children with prior system contact. ** p < 0.05 &nbsp; *** p < 0.01</p>
@@ -660,14 +311,8 @@ if (!is.null(lag_d)) {
 **Table 3.1b.  Recovery model — regression summary**
 
 ```{r tab-3-1b}
-
-df_b <- tribble(~term,~c3,~c4,
-  "SMS / phone contact (ref: home visit)", b1_sms,  b1_sms,
-  "Distance to health facility (km)",      b1_dist, b1_dist,
-  "Age at tracing (months)",               b1_age,  b1_age,
-  "Days since last facility visit",        b1_lag,  b1_lag,
-  "<em>N</em>",                            "40,236", b_n,
-  "<em>R²</em>",                           "0.117",  b_r2)
+df_b <- show_tab("tab_3_1b")
+if (!is.null(df_b)) {
 df_b %>%
   kbl(col.names=c("","Full sample","Lag-time subset"), align=c("l","r","r"), escape=FALSE) %>%
   kable_styling(bootstrap_options=c("striped","hover","condensed","bordered"),
@@ -677,82 +322,33 @@ df_b %>%
   column_spec(1,width="26em") %>% column_spec(2:3,width="13em") %>%
   row_spec(4,extra_css="border-bottom:1px solid #ccc;") %>%
   row_spec(5:6,extra_css="font-style:italic;border-top:1px solid #ccc;")
-
+}
 ```
 
 <p class="note">Outcome: confirmed in-network return (<em>yes_ok</em> only). Log-odds scale, 95% CIs, LGA-clustered SE. SMS contact is the only significant predictor; distance, age, and lag time are null. The lag-time subset is restricted to records with a prior facility visit date and likely over-represents children with prior system contact. ** p < 0.05 &nbsp; *** p < 0.01</p>
 
-The full tracing dataset comprises 38,913 attempts. A lag-time value, days since the child’s last recorded visit, can only be constructed for attempts where a prior visit exists in the facility visits table, which holds for 16,132 of these, fewer than half. This is a substantial loss of observations, and the two subsets are unlikely to be equivalent. Children retained in the lag-time subset have, by construction, at least one prior recorded visit, meaning they were already somewhat engaged with the formal system before defaulting, a different and probably more reachable population than the full traced group, which also includes children with no prior visit history at all.
+The full tracing dataset comprises 38,913 attempts. A lag-time value, days since the child's last recorded visit, can only be constructed for attempts where a prior visit exists in the facility visits table, which holds for 16,132 of these, fewer than half. This is a substantial loss of observations, and the two subsets are unlikely to be equivalent. Children retained in the lag-time subset have, by construction, at least one prior recorded visit, meaning they were already somewhat engaged with the formal system before defaulting, a different and probably more reachable population than the full traced group, which also includes children with no prior visit history at all.
 
 ### ii. Main results
 
-SMS contact is a significant predictor of recovery (β = 0.436, p < 0.001) in the full sample, the strongest effect in this model. Distance and age at tracing show no significant effect once method is accounted for. This is a notable departure from the zero-dose model, where distance was the dominant predictor: a one-kilometre increase in distance raises the odds of zero-dose status meaningfully, yet the same distance shows no detectable relationship with whether a tracing attempt succeeds. The explanation offered in Section II.C.i is consistent with this pattern, a tracing attempt conducted by phone or SMS does not require the physical travel that getting enrolled in the first place does, so the access barrier distance represents earlier in a child’s journey through the programme appears not to recur at the recovery stage.
+SMS contact is a significant predictor of recovery (β = 0.436, p < 0.001) in the full sample, the strongest effect in this model. Distance and age at tracing show no significant effect once method is accounted for. This is a notable departure from the zero-dose model, where distance was the dominant predictor: a one-kilometre increase in distance raises the odds of zero-dose status meaningfully, yet the same distance shows no detectable relationship with whether a tracing attempt succeeds. The explanation offered in Section II.C.i is consistent with this pattern, a tracing attempt conducted by phone or SMS does not require the physical travel that getting enrolled in the first place does, so the access barrier distance represents earlier in a child's journey through the programme appears not to recur at the recovery stage.
 
 ```{r fig-3-6, fig.height=3.8, fig.width=8, dpi=150}
-
-coef_r <- tribble(~label,~estimate,~se,
-  "SMS / phone contact\n(ref: home visit)",0.444,0.145,
-  "Distance to\nhealth facility (km)",-0.051,0.061,
-  "Age at tracing\n(months)",-0.005,0.003,
-  "Days since\nlast visit",-0.001,0.001) %>%
-  mutate(ci_lo=estimate-1.96*se, ci_hi=estimate+1.96*se,
-         sig=abs(estimate/se)>1.96, star=map2_chr(estimate,se,star2),
-         label=fct_rev(fct_inorder(label)))
-
-ggplot(coef_r, aes(x=estimate,y=label)) +
-  geom_vline(xintercept=0,linetype="dashed",colour="#aaa",linewidth=0.6) +
-  geom_errorbarh(aes(xmin=ci_lo,xmax=ci_hi,colour=sig),height=0.16,linewidth=0.9) +
-  geom_point(aes(fill=sig),shape=21,size=3.8,stroke=0.8,colour="white") +
-  geom_text(aes(x=ci_hi+0.02,label=paste0(formatC(estimate,format="f",digits=3),
-            if_else(sig,star," n.s."))),hjust=0,size=3.1,family="serif",colour="#333") +
-  scale_colour_manual(values=c("TRUE"="#BA7517","FALSE"=col_nonsig),guide="none") +
-  scale_fill_manual(values=c("TRUE"="#BA7517","FALSE"="#d5d5d5"),guide="none") +
-  scale_x_continuous(limits=c(-0.2,0.85),breaks=seq(-0.2,0.8,0.2)) +
-  labs(title="Figure 3.6.  Recovery model — coefficient plot",
-       subtitle="Outcome: confirmed in-network return · LGA fixed effects · LGA-clustered SE · N = 16,132",
-       x="Coefficient (log-odds scale)",y=NULL,
-       caption="Amber = significant at p < 0.01. Grey = not significant. SMS contact is the sole significant predictor of recovery.\nDistance, which predicts zero-dose status, has no bearing on recovery once a child is flagged.") +
-  theme_diss(11)+theme(axis.text.y=element_text(lineheight=0.9))
-
+show_fig("fig_3_6_path")
 ```
 
 <p class="note">SMS or phone contact is the only significant predictor of confirmed recovery (β = 0.444, p < 0.01). Distance to facility, which predicts zero-dose status in Figure 3.3, has no bearing on whether a flagged child is recovered. This asymmetry matters: the barrier to being reached is not the barrier to being recovered.</p>
 
-In the lag-time subset, the SMS effect holds at almost identical magnitude (β = 0.444, p < 0.001), and days since last visit shows the expected negative direction, longer gaps associated with lower recovery, though it does not reach significance. An older child at the point of tracing is better understood through this lens than as an age effect in its own right: age at tracing and days since last visit are correlated by construction, since both increase together as a case goes unresolved, and once timing is included directly, age itself carries little independent weight. The SMS finding’s stability across both the full sample and the smaller, more engaged lag-time subset is the more important result here, the headline conclusion does not depend on which of the two samples is used.
+In the lag-time subset, the SMS effect holds at almost identical magnitude (β = 0.444, p < 0.001), and days since last visit shows the expected negative direction, longer gaps associated with lower recovery, though it does not reach significance. An older child at the point of tracing is better understood through this lens than as an age effect in its own right: age at tracing and days since last visit are correlated by construction, since both increase together as a case goes unresolved, and once timing is included directly, age itself carries little independent weight. The SMS finding's stability across both the full sample and the smaller, more engaged lag-time subset is the more important result here, the headline conclusion does not depend on which of the two samples is used.
 
-The effect of SMS contact is not uniform across the two states. In Katsina, SMS-traced cases recover at 77.3 per cent against 68.7 per cent for home-visit cases, SMS outperforming. In Kano, the pattern reverses, home visits recover at 40.1 per cent against 35.2 per cent for SMS. Field conversation with DATHARM’s Kano coordinator confirmed this is a real operational pattern rather than a statistical artefact, home visits are understood internally to outperform phone-based contact in Kano specifically, and card verification remains the stated protocol for confirming any outcome regardless of method.
+The effect of SMS contact is not uniform across the two states. In Katsina, SMS-traced cases recover at 77.3 per cent against 68.7 per cent for home-visit cases, SMS outperforming. In Kano, the pattern reverses, home visits recover at 40.1 per cent against 35.2 per cent for SMS. Field conversation with DATHARM's Kano coordinator confirmed this is a real operational pattern rather than a statistical artefact, home visits are understood internally to outperform phone-based contact in Kano specifically, and card verification remains the stated protocol for confirming any outcome regardless of method.
 
 ### iii. Strict versus reported recovery
 
 The recovery rate reported by the programme depends heavily on how recovery is defined. Under a strict definition, requiring a confirmed in-network vaccination record, the recovery rate is 22 per cent. Under a permissive definition that also counts self-reported off-network care, vaccination obtained outside any MCHTrack-affiliated facility and confirmed only by a card check with no detail of what the card showed, the figure rises to 43 per cent. This near-doubling is not evenly distributed: the gap between the two definitions is 38 percentage points in Kano and 12.5 points in Katsina.
 
 ```{r fig-3-7, fig.height=4.2, fig.width=8, dpi=150}
-
-rec <- tribble(~state,~definition,~pct,
-  "Kano","Strict",38.4,"Kano","Permissive",76.4,
-  "Katsina","Strict",71.5,"Katsina","Permissive",83.1) %>%
-  mutate(definition=factor(definition,levels=c("Strict","Permissive")))
-gaps <- rec %>% group_by(state) %>%
-  summarise(s=pct[definition=="Strict"],p=pct[definition=="Permissive"],
-            gap=p-s,ymid=(s+p)/2,.groups="drop")
-
-ggplot(rec, aes(x=definition,y=pct,fill=definition)) +
-  geom_col(width=0.55,alpha=0.92) +
-  geom_text(aes(label=paste0(pct,"%")),vjust=-0.5,size=3.4,fontface="bold",family="serif") +
-  geom_segment(data=gaps,aes(x=2.42,xend=2.42,y=s,yend=p),inherit.aes=FALSE,
-               colour="#444",linewidth=0.5,arrow=arrow(ends="both",length=unit(0.07,"cm"))) +
-  geom_text(data=gaps,aes(x=2.52,y=ymid,label=paste0("+",round(gap,1)," pp")),
-            inherit.aes=FALSE,hjust=0,size=3.0,family="serif",colour="#444") +
-  scale_fill_manual(values=c("Strict"=col_notrec,"Permissive"=col_offnet),guide="none") +
-  scale_y_continuous(limits=c(0,100),labels=label_number(suffix="%"),expand=expansion(mult=c(0,0.05))) +
-  scale_x_discrete(expand=expansion(add=c(0.6,0.95))) +
-  facet_wrap(~state) +
-  labs(title="Figure 3.7.  Strict versus permissive recovery rate by state",
-       subtitle="Strict = confirmed in-network return · Permissive = including unverified off-network reports",
-       x=NULL,y="Recovery rate",
-       caption="The gap is the share of reported recovery resting on unverifiable off-network claims. More than three times larger in\nKano (+38.0 pp) than Katsina (+11.6 pp) — a difference in verification practice, not in tracing effectiveness.") +
-  theme_diss(11)
-
+show_fig("fig_3_7_path")
 ```
 
 <p class="note">The clearest single illustration of the verification gap. Under the permissive definition a programme would claim roughly double what a strict, verifiable standard supports, and the overstatement varies sharply by state. Kano's 38-point gap against Katsina's 12 reflects how much off-network care goes unverified, not how well tracing works.</p>
@@ -763,57 +359,10 @@ This is the clearest single illustration in this thesis of the verification gap 
 
 ### i. Descriptive overview
 
-Daily facility visit counts are heavily zero-inflated, a substantial share of LGA-days record no visits at all, and the variance of these counts exceeds their mean by a wide margin in every LGA examined, confirming the overdispersion anticipated in Section II.D and ruling out a standard Poisson specification on theoretical grounds. A closer look at which days are quiet suggests a calendar-driven rather than weather-driven explanation: zero-visit days cluster around specific weekdays and around known religious holiday periods rather than appearing evenly distributed across the year, a pattern more consistent with scheduled closures and social rhythm than with any environmental driver, and one that sets up the discussion in Section IV of why social and operational factors may dominate over weather in explaining this dataset’s variation.
+Daily facility visit counts are heavily zero-inflated, a substantial share of LGA-days record no visits at all, and the variance of these counts exceeds their mean by a wide margin in every LGA examined, confirming the overdispersion anticipated in Section II.D and ruling out a standard Poisson specification on theoretical grounds. A closer look at which days are quiet suggests a calendar-driven rather than weather-driven explanation: zero-visit days cluster around specific weekdays and around known religious holiday periods rather than appearing evenly distributed across the year, a pattern more consistent with scheduled closures and social rhythm than with any environmental driver, and one that sets up the discussion in Section IV of why social and operational factors may dominate over weather in explaining this dataset's variation.
 
 ```{r fig-3-8, fig.height=3.6, fig.width=9, dpi=150}
-
-pj_path <- file.path(era_dir,"06_panel_daily.rds")
-if (file.exists(pj_path)) { pj <- readRDS(pj_path) } else {
-  pj <- read_csv(file.path(home,"06_panel_daily.csv"), show_col_types=FALSE)
-}
-pj <- pj %>% mutate(vd=as.Date(visit_date))
-
-hist_means <- pj %>% group_by(lga_clean) %>%
-  summarise(mv=mean(n_visits,na.rm=TRUE),.groups="drop")
-p_hist <- ggplot(pj, aes(x=n_visits,fill=lga_clean)) +
-  geom_histogram(bins=45,position="identity",alpha=0.55,colour=NA) +
-  geom_vline(data=hist_means, aes(xintercept=mv,colour=lga_clean),
-             linetype="dashed", linewidth=0.8, show.legend=FALSE) +
-  geom_text(data=hist_means, aes(x=mv,colour=lga_clean,
-            label=paste0(lga_clean,"\nmean ",round(mv)," /day")),
-            y=Inf, vjust=c(1.4,3.0), hjust=-0.05, size=2.4,
-            family="serif", fontface="bold", show.legend=FALSE) +
-  scale_fill_manual(values=c("Gabasawa"="#1D6FA4","Ungogo"="#BA7517")) +
-  scale_colour_manual(values=c("Gabasawa"="#1D6FA4","Ungogo"="#BA7517"),guide="none") +
-  scale_y_continuous(labels=comma) +
-  labs(subtitle="A. Visit count distribution",x="Daily visits",y="LGA-days") + theme_diss(10)
-
-dow_lab <- c("Sun","Mon","Tue","Wed","Thu","Fri","Sat")
-p_dow <- pj %>% group_by(dow_num) %>%
-  summarise(mv=mean(n_visits,na.rm=TRUE),.groups="drop") %>%
-  mutate(dl=factor(dow_lab[dow_num],levels=dow_lab), wk=dow_num%in%c(1,6,7)) %>%
-  ggplot(aes(x=dl,y=mv,fill=wk)) + geom_col(width=0.6,alpha=0.9) +
-  scale_fill_manual(values=c("TRUE"="#C0312D","FALSE"="#1D6FA4"),guide="none") +
-  labs(subtitle="B. Mean visits by weekday",x=NULL,y="Mean visits") + theme_diss(10) +
-  theme(axis.text.x=element_text(size=8))
-
-p_zero <- pj %>% mutate(ym=floor_date(vd,"month"),z=as.integer(n_visits==0)) %>%
-  group_by(ym) %>% summarise(zd=sum(z),.groups="drop") %>%
-  ggplot(aes(x=ym,y=zd)) + geom_col(fill="#BA7517",alpha=0.8,width=22) +
-  annotate("text",x=as.Date("2025-03-15"),y=Inf,label="Ramadan",vjust=1.4,
-           size=2.4,colour="#BA7517",fontface="italic",family="serif") +
-  scale_x_date(date_breaks="4 months",date_labels="%b %y") +
-  labs(subtitle="C. Zero-visit days per month",x=NULL,y="Zero-visit days") + theme_diss(10) +
-  theme(axis.text.x=element_text(angle=30,hjust=1,size=8))
-
-(p_hist | p_dow | p_zero) +
-  plot_annotation(title="Figure 3.8.  Daily facility visit diagnostics",
-    subtitle="Kano · Ungogo and Gabasawa · Aug 2024 – Mar 2026",
-    caption="Counts are zero-inflated and right-skewed (A). Quiet days cluster on weekends (B) and around religious holidays (C),\na calendar-driven rather than weather-driven pattern that motivates the null weather findings that follow.",
-    theme=theme(plot.title=element_text(family="serif",face="bold",size=12.5),
-                plot.subtitle=element_text(family="serif",size=10,colour="#666"),
-                plot.caption=element_text(family="serif",size=9,colour="#888",hjust=0,lineheight=1.1)))
-
+show_fig("fig_3_8_path")
 ```
 
 <p class="note">Zero-visit days cluster on specific weekdays and around known religious holiday periods rather than spreading evenly across the year. This is a calendar and social rhythm, not an environmental signal, and it sets up why weather explains none of the residual variation in the models that follow.</p>
@@ -823,14 +372,8 @@ p_zero <- pj %>% mutate(ym=floor_date(vd,"month"),z=as.integer(n_visits==0)) %>%
 None of the three weather variables tested show a significant or directionally consistent effect on daily visit counts. Rainfall, heat, and the vegetation index each return small coefficients that fail to reach significance under the primary log-transformed specification, and the direction of effect is not consistent across the three, heat moves in the direction a deterrence hypothesis would predict, rainfall and vegetation do not.
 
 ```{r tab-weather}
-
-wx <- tribble(~Spec,~Variable,~Measure,~Coef_CI,~Panel,~FE,~N,~R2,
-  "W1","Precipitation","Days per month above 38°C",ci_cell(-0.006,0.002),"Monthly","LGA","24","0.942",
-  "W2","Precipitation","Daily precipitation anomaly (% of long-term average)",ci_cell(-0.006,0.002),"Daily","LGA, DOW, month-year","1,216","0.698",
-  "W3","Heat","Extreme heat day (UTCI ≥ 38°C, binary)",ci_cell(-0.056,0.089),"Daily","LGA, DOW, month-year","1,216","0.698",
-  "W4","Heat","Daytime mean UTCI (°C, centred)",ci_cell(0.019,0.014),"Daily","LGA, DOW, month-year","1,216","0.698",
-  "W5","Vegetation","NDVI seasonal level (vim, centred)",ci_cell(0.036,0.193),"Monthly","LGA","40","0.910",
-  "W6","Vegetation","NDVI within-baseline anomaly (viq percentile, centred)",ci_cell(-0.053,0.016),"Monthly","LGA, month-year","40","0.989")
+wx <- show_tab("tab_weather")
+if (!is.null(wx)) {
 wx %>% mutate(Variable=if_else(duplicated(Variable),"",Variable)) %>%
   kbl(col.names=c("","Variable","Exposure measure","Coef. [95% CI]","Panel","Fixed effects","N","R²"),
       align=c("c","l","l","r","c","l","r","r"),escape=FALSE) %>%
@@ -840,7 +383,7 @@ wx %>% mutate(Variable=if_else(duplicated(Variable),"",Variable)) %>%
   column_spec(5,width="6em") %>% column_spec(6,width="16em") %>% column_spec(7:8,width="5em") %>%
   row_spec(c(3,4),background="#FFF8EE") %>% row_spec(c(5,6),background="#F0F7EE") %>%
   row_spec(2,extra_css="border-bottom:1px solid #bbb;") %>% row_spec(4,extra_css="border-bottom:1px solid #bbb;")
-
+}
 ```
 
 <p class="note"><strong>Why the starred coefficients here do not indicate a real weather effect.</strong> Three specifications (W1, W2, W6) show stars, but none survives scrutiny, and the thesis reports no weather relationship for specific, identifiable reasons. W1 rests on 24 monthly observations from just two sites; with so few degrees of freedom the standard error is artificially small and the star is a small-sample artefact, not evidence. W2 uses the same two-site precipitation series and the same clustered errors, so it inherits the identical artificially tight interval. W6 is significant only because month-year fixed effects strip out all within-site variation, leaving the coefficient to capture the fixed level difference between Gabasawa and Ungogo, a comparison of two places rather than a response to changing vegetation. In every case the star reflects a structural quirk of a tiny two-unit panel, not a signal that weather moves immunisation-seeking. The properly powered daily specifications (W3, W4) are cleanly null. Outcome: log(visits + 1), OLS throughout, Kano only. High R² comes from fixed-effect absorption of seasonal variance, not the weather predictors. ** p < 0.05 &nbsp; *** p < 0.01</p>
@@ -850,19 +393,22 @@ wx %>% mutate(Variable=if_else(duplicated(Variable),"",Variable)) %>%
 A negative binomial specification, the theoretically preferred alternative given the overdispersion confirmed above, was tested against the precipitation variable as a robustness check. The two specifications agree in direction and in the absence of significance, and the log-transformed OLS specification is retained as primary throughout this thesis for the reasons of consistency and interpretability set out in Section II.D.
 
 ```{r fig-3-10}
-
-nb <- tribble(~Specification,~Coef,~SE,
-  "OLS — log(visits + 1)",-0.006,0.002,
-  "Negative binomial — counts",-0.005,0.002) %>%
-  mutate(CI=paste0("[",round(Coef-1.96*SE,4),", ",round(Coef+1.96*SE,4),"]"),
-         Sig=map2_chr(Coef,SE,star2), Sig=if_else(Sig=="","n.s.",Sig))
-nb %>% select(Specification,Coef,SE,CI,Sig) %>%
+# tab_3_10 in the manifest covers all three weather variables (precip,
+# heat, NDVI) since 10_visualizations.R's NB check now spans all three,
+# not just precipitation. Filtered to Precipitation here to match this
+# section's prose, which discusses precipitation only. The full
+# three-variable comparison is available in artifacts$tab_3_10 if a
+# later revision expands this section's text to match.
+nb <- show_tab("tab_3_10")
+if (!is.null(nb)) {
+nb %>% filter(Variable == "Precipitation") %>%
+  select(Specification, Coef, SE, CI, Sig) %>%
   kbl(col.names=c("Specification","Coef.","SE","95% CI",""),
       digits=4, align=c("l","r","r","c","c"), escape=FALSE) %>%
   kable_styling(bootstrap_options=c("striped","condensed","bordered"),
                 full_width=FALSE, font_size=13) %>%
   column_spec(1,bold=TRUE)
-
+}
 ```
 
 <p class="note">Table 3.3 (Figure 3.10 slot). The negative binomial, theoretically preferred given the overdispersion in Figure 2.3, agrees with log-OLS in direction and significance on the precipitation variable. Log-OLS is retained as primary across all weather models for consistency and interpretability, not because it performs better. Both specifications are nominally significant here for the same underpowered-panel reason noted for W1.</p>
@@ -874,48 +420,34 @@ nb %>% select(Specification,Coef,SE,CI,Sig) %>%
 Distance predicts zero-dose status under the primary definition (β = 0.043). Under a stricter definition, no vaccine contact recorded at all, the coefficient rises to 0.598, roughly a fourteen-fold increase. Distance predicts almost nothing about recovery. Once a child is flagged and a tracing attempt begins, the same variable shows no detectable effect at all, consistent with the explanation offered in Section II.C.i, that recovery here runs through SMS and phone contact rather than physical travel.
 
 ```{r tab-4-1}
-
-syn <- tribble(~Theme,~Finding,~Field,
-  "Distance","Not significant under the permissive flag; 14.6× larger and highly significant under the strict definition (β 0.043 → 0.627).","Coordinator confirmed distance is the primary barrier at enrolment, not at follow-up.",
-  "Timing","Age at registration predicts ZD status (p < 0.05); recovered children have shorter median lag (46 vs 56 days).","Long-open cases described as qualitatively harder to close; CHW attrition noted.",
-  "Recordkeeping","Strict recovery 42.6% vs permissive 77.2%. Off-network gap 38 pp in Kano, 12 pp in Katsina.","Off-network care verbal only; card not retained. Confirmed as standard practice.",
-  "Weather","Null across all three variables and all specifications.","No programme staff named weather as a barrier in any conversation.")
+syn <- show_tab("tab_4_1")
+if (!is.null(syn)) {
 syn %>% kbl(col.names=c("Theme","Quantitative finding","Field observation"),
             align=c("l","l","l"), escape=FALSE) %>%
   kable_styling(bootstrap_options=c("striped","hover","condensed","bordered"),
                 full_width=TRUE, font_size=12) %>%
   column_spec(1,bold=TRUE,width="8em",color="#1D6FA4") %>%
   column_spec(2,width="38em") %>% column_spec(3,width="30em",italic=TRUE,color="#555")
-
+}
 ```
 
 <p class="note">Quantitative findings paired with field observation across the three analytical themes plus weather. Field observation is contextual grounding from conversations with DATHARM staff and two PHC visits, not a structured qualitative method. Where the two converge, the reading is strengthened; the weather row converges by shared absence.</p>
 
-This split says something useful about DATHARM’s two stated problems, finding zero-dose children and getting them vaccinated once found. They are not the same problem, and they do not respond to the same fix. Physical reach, more outreach points, shorter travel distances, matters for the first. The second seems to depend far more on contact method and speed than on geography.
+This split says something useful about DATHARM's two stated problems, finding zero-dose children and getting them vaccinated once found. They are not the same problem, and they do not respond to the same fix. Physical reach, more outreach points, shorter travel distances, matters for the first. The second seems to depend far more on contact method and speed than on geography.
 
-DATHARM’s Kano coordinator estimated that roughly one in five households are missed during enumeration rounds. There is no way to check this against MCHTrack’s own records, since nothing in the system tracks a household that was never reached in the first place. But it points the same way as the regression does. Every zero-dose count in this thesis describes children the programme managed to find, not children who exist. Distance almost certainly shapes who gets found at all, in ways this analysis, built entirely from children eventually enumerated, has no way to observe directly.
+DATHARM's Kano coordinator estimated that roughly one in five households are missed during enumeration rounds. There is no way to check this against MCHTrack's own records, since nothing in the system tracks a household that was never reached in the first place. But it points the same way as the regression does. Every zero-dose count in this thesis describes children the programme managed to find, not children who exist. Distance almost certainly shapes who gets found at all, in ways this analysis, built entirely from children eventually enumerated, has no way to observe directly.
 
-The recovery model’s state-level reversal adds a further layer. SMS outperforms home visits in Katsina, recovering 77.3 per cent of cases against 68.7 per cent for home visits. In Kano the pattern flips. Home visits reach 40.1 per cent of cases, SMS only 35.2 per cent. This is not a statistical quirk. DATHARM’s Kano coordinator described home visits as the more effective method in Kano specifically, and card verification remains the stated protocol for confirming any outcome regardless of which method makes first contact. Had this thesis pooled both states into a single estimate, the reversal would have disappeared entirely.
+The recovery model's state-level reversal adds a further layer. SMS outperforms home visits in Katsina, recovering 77.3 per cent of cases against 68.7 per cent for home visits. In Kano the pattern flips. Home visits reach 40.1 per cent of cases, SMS only 35.2 per cent. This is not a statistical quirk. DATHARM's Kano coordinator described home visits as the more effective method in Kano specifically, and card verification remains the stated protocol for confirming any outcome regardless of which method makes first contact. Had this thesis pooled both states into a single estimate, the reversal would have disappeared entirely.
 
-The strict-versus-permissive recovery gap belongs in the same discussion. Recovery measured strictly, a confirmed in-network vaccination, stands at 22 per cent. Measured permissively, counting unverified off-network care, it rises to 43 per cent. This gap is not noise. It follows directly from the protocol described in Section II.A, which allows a tracing case to close on the strength of a card check, with no record kept of what the card actually showed. Whichever figure DATHARM reports, the distance between the two is a fact about the limits of the underlying records, and no amount of further modelling will close it. Taken together, these three findings suggest the same caution applies throughout this thesis’s first two models: each coefficient is real, but each also marks the edge of what MCHTrack’s records can confirm on their own.
+The strict-versus-permissive recovery gap belongs in the same discussion. Recovery measured strictly, a confirmed in-network vaccination, stands at 22 per cent. Measured permissively, counting unverified off-network care, it rises to 43 per cent. This gap is not noise. It follows directly from the protocol described in Section II.A, which allows a tracing case to close on the strength of a card check, with no record kept of what the card actually showed. Whichever figure DATHARM reports, the distance between the two is a fact about the limits of the underlying records, and no amount of further modelling will close it. Taken together, these three findings suggest the same caution applies throughout this thesis's first two models: each coefficient is real, but each also marks the edge of what MCHTrack's records can confirm on their own.
 
 ## B. Why the weather model came back null: reading it against Sindh and Miami
 
 The same test has been run twice elsewhere, and both times it found something. Siddiqi et al. (2025) linked daily heat data to a real-time immunisation registry in Sindh, Pakistan, and found that heat wave days significantly reduced immunisation delivery, with outreach activities hit harder than fixed-site delivery. Samano et al. (2021) linked daily heat and precipitation to an HIV clinic registry in Miami, and found both variables significantly increased missed appointments there.
 
 ```{r tab-4-2}
-
-# Table 4.2 — comparator registry studies
-# Source: Section IV.B. This thesis against the two closest precedents
-# that link high-frequency weather to a routine health registry.
-
-t42 <- tribble(
-  ~Study,                    ~Setting,                  ~Registry,                            ~Exposure,                       ~Result,
-  "This thesis (2026)",      "Kano & Katsina, Nigeria", "MCHTrack zero-dose tracking",        "Rainfall, heat, NDVI",          "Null — no significant effect on any variable",
-  "Siddiqi et al. (2025)",   "Sindh, Pakistan",         "Provincial electronic immunisation registry (132M doses)", "Heat wave days",  "Significant reduction — outreach hit hardest (−21.2%), fixed-site least (−5.8%)",
-  "Samano et al. (2021)",    "Miami, USA",              "HIV clinic appointment registry",    "Extreme heat & precipitation",  "Significant increase in missed appointments (+13% for extreme precipitation)"
-)
-
+t42 <- show_tab("tab_4_2")
+if (!is.null(t42)) {
 t42 %>%
   kbl(
     col.names = c("Study", "Setting", "Registry", "Weather exposure", "Direction and significance"),
@@ -933,58 +465,46 @@ t42 %>%
   column_spec(4, width = "12em") %>%
   column_spec(5, width = "22em", italic = TRUE) %>%
   row_spec(1, background = "#EAF2FB", bold = TRUE)
-
+}
 ```
 
 Five explanations are worth weighing. They are not mutually exclusive, and several likely operate together.
 
-The first concerns what dominates the social calendar. Zero-visit days in this dataset cluster around specific weekdays and known religious holidays rather than spreading evenly across the year, as Section III.C.i showed. If social and operational rhythm already explains most of the swing in daily visits, little room is left for weather to explain anything further, whether or not a real weather effect exists underneath it. This matches what was heard directly in the field. Across conversations with DATHARM staff and visits to two primary healthcare centres near Abuja, nobody named weather as a reason families miss appointments, even when discussion turned directly to barriers and attendance. The barriers named instead were almost entirely social, gendered, and economic. Caregiver focus group discussions conducted in Kano found that gender-skewed household decision-making, misconceptions about vaccine safety, and competing demands on a caregiver’s limited time and money were the barriers most consistently raised (Bolarinwa et al., 2025), and a companion study across northern Nigeria identified ineffective documentation of immunisation appointments and vaccine supply shortages as dominant system-level constraints (Etim et al., 2025). None of this evidence mentions weather. A null finding sitting alongside this body of caregiver-reported barriers looks less like an absence and more like confirmation that other factors are doing the explanatory work weather might otherwise be expected to do.
+The first concerns what dominates the social calendar. Zero-visit days in this dataset cluster around specific weekdays and known religious holidays rather than spreading evenly across the year, as Section III.C.i showed. If social and operational rhythm already explains most of the swing in daily visits, little room is left for weather to explain anything further, whether or not a real weather effect exists underneath it. This matches what was heard directly in the field. Across conversations with DATHARM staff and visits to two primary healthcare centres near Abuja, nobody named weather as a reason families miss appointments, even when discussion turned directly to barriers and attendance. The barriers named instead were almost entirely social, gendered, and economic. Caregiver focus group discussions conducted in Kano found that gender-skewed household decision-making, misconceptions about vaccine safety, and competing demands on a caregiver's limited time and money were the barriers most consistently raised (Bolarinwa et al., 2025), and a companion study across northern Nigeria identified ineffective documentation of immunisation appointments and vaccine supply shortages as dominant system-level constraints (Etim et al., 2025). None of this evidence mentions weather. A null finding sitting alongside this body of caregiver-reported barriers looks less like an absence and more like confirmation that other factors are doing the explanatory work weather might otherwise be expected to do.
 
-The second concerns a larger and more severe shock crowding out a gentler one. Vaccination access across the wider Sahel has been shown to track conflict and the breakdown of administrative infrastructure far more closely than any environmental variable, with zero-dose rates in conflict-affected states reaching as high as 43 per cent (Sabahelzain et al., 2025). Kano and Katsina sit within this same security environment, and a population already absorbing the effects of insecurity, displaced administrative capacity, and disrupted supply chains may simply have little remaining sensitivity to a comparatively mild stressor like a hot day or a rainy week. This is a different claim from adaptation in the physiological sense. It is a claim about which threats compete for a household’s limited capacity to respond, and conflict, in this setting, plausibly wins that competition before weather is ever in contention.
+The second concerns a larger and more severe shock crowding out a gentler one. Vaccination access across the wider Sahel has been shown to track conflict and the breakdown of administrative infrastructure far more closely than any environmental variable, with zero-dose rates in conflict-affected states reaching as high as 43 per cent (Sabahelzain et al., 2025). Kano and Katsina sit within this same security environment, and a population already absorbing the effects of insecurity, displaced administrative capacity, and disrupted supply chains may simply have little remaining sensitivity to a comparatively mild stressor like a hot day or a rainy week. This is a different claim from adaptation in the physiological sense. It is a claim about which threats compete for a household's limited capacity to respond, and conflict, in this setting, plausibly wins that competition before weather is ever in contention.
 
-The third concerns time, not presence or absence. Heat does not straightforwardly suppress outdoor activity so much as redistribute it within the day. Using cell phone location data across thousands of locations in China, Fan et al. (2023) found that outdoor activity shifts away from the hottest hours of the day toward morning and evening rather than simply declining, an adaptation margin invisible to any analysis working at daily resolution. MCHTrack’s facility visits table records only a date, not a time, for every recorded visit. If caregivers in Kano and Katsina respond to a hot day by visiting a clinic earlier or later rather than not at all, this analysis has no way to detect that shift, and a true behavioural response to heat could exist entirely within a single day’s data, invisible to a model that can only see whether a visit happened, not when.
+The third concerns time, not presence or absence. Heat does not straightforwardly suppress outdoor activity so much as redistribute it within the day. Using cell phone location data across thousands of locations in China, Fan et al. (2023) found that outdoor activity shifts away from the hottest hours of the day toward morning and evening rather than simply declining, an adaptation margin invisible to any analysis working at daily resolution. MCHTrack's facility visits table records only a date, not a time, for every recorded visit. If caregivers in Kano and Katsina respond to a hot day by visiting a clinic earlier or later rather than not at all, this analysis has no way to detect that shift, and a true behavioural response to heat could exist entirely within a single day's data, invisible to a model that can only see whether a visit happened, not when.
 
-The fourth concerns heat’s effect on a caregiver’s time and energy rather than on the act of travel itself. Heat stress measurably reduces physical labour capacity among outdoor and agricultural workers, with real-world studies of subsistence farmers in Burkina Faso confirming significant increases in physiological strain and worsened sleep under field conditions. Much of the Sahel’s rural population, including caregivers in Kano and Katsina’s farming communities, works outdoors for some part of most days. A hot day may not deter a clinic visit through the discomfort of travel so much as through exhaustion, reduced household labour capacity, and the resulting reshuffling of a day’s priorities, a mechanism this analysis cannot separate from simple deterrence, since both would produce the same null or weak signal in a model testing only whether a visit occurred.
+The fourth concerns heat's effect on a caregiver's time and energy rather than on the act of travel itself. Heat stress measurably reduces physical labour capacity among outdoor and agricultural workers, with real-world studies of subsistence farmers in Burkina Faso confirming significant increases in physiological strain and worsened sleep under field conditions. Much of the Sahel's rural population, including caregivers in Kano and Katsina's farming communities, works outdoors for some part of most days. A hot day may not deter a clinic visit through the discomfort of travel so much as through exhaustion, reduced household labour capacity, and the resulting reshuffling of a day's priorities, a mechanism this analysis cannot separate from simple deterrence, since both would produce the same null or weak signal in a model testing only whether a visit occurred.
 
-The fifth concerns the outcome variable itself, and is less comfortable than the first four. Siddiqi’s and Samano’s registries both record a clinical encounter that either happened or did not on a given day, with little reason to doubt that basic record in either case. MCHTrack’s facility visits table carries the enumeration and verification problems set out across Section II. A null result against a noisier outcome cannot carry the same weight as a null result against a cleaner one, and a real weather effect, however it operates, could exist here and still be too faint for this dataset to catch.
+The fifth concerns the outcome variable itself, and is less comfortable than the first four. Siddiqi's and Samano's registries both record a clinical encounter that either happened or did not on a given day, with little reason to doubt that basic record in either case. MCHTrack's facility visits table carries the enumeration and verification problems set out across Section II. A null result against a noisier outcome cannot carry the same weight as a null result against a cleaner one, and a real weather effect, however it operates, could exist here and still be too faint for this dataset to catch.
 
-Taken together, these five explanations point toward the same broader conclusion from a different angle each time. Weather may genuinely matter less in this setting than in Sindh or Miami, because conflict and social barriers dominate the explanatory space before weather arrives, because the data cannot see the time-shifting or labour-capacity channels through which a weather effect would most plausibly operate, or because the data itself is too noisy to detect an effect that is real but small. This thesis cannot distinguish between these explanations with the data as currently structured, a limitation returned to directly in Section V’s recommendations for what MCHTrack would need to capture to test them, and the fifth explanation in particular is worth holding in mind through the next two sections, since the question of how much MCHTrack’s records can be trusted on their own runs through everything that follows.
+Taken together, these five explanations point toward the same broader conclusion from a different angle each time. Weather may genuinely matter less in this setting than in Sindh or Miami, because conflict and social barriers dominate the explanatory space before weather arrives, because the data cannot see the time-shifting or labour-capacity channels through which a weather effect would most plausibly operate, or because the data itself is too noisy to detect an effect that is real but small. This thesis cannot distinguish between these explanations with the data as currently structured, a limitation returned to directly in Section V's recommendations for what MCHTrack would need to capture to test them, and the fifth explanation in particular is worth holding in mind through the next two sections, since the question of how much MCHTrack's records can be trusted on their own runs through everything that follows.
 
 ## C. The limits of ward-level analysis: what the Kano/Katsina asymmetry teaches about this kind of data more broadly
 
-Section III.A.iii found a pattern worth treating as a central methodological point rather than a side note. Katsina’s ward residuals show the largest deviations from the model’s predictions anywhere in this analysis, with several wards more than twenty percentage points above expected. Katsina is also the state with the documented duplication problem, 38.9 per cent of facility visit records affected by a device handover, and the state where the verification gap, a tracing case closed on a card check with no record of what the card showed, has the most room to affect the underlying numbers. Kano, cleaner throughout, shows a flatter spread.
+Section III.A.iii found a pattern worth treating as a central methodological point rather than a side note. Katsina's ward residuals show the largest deviations from the model's predictions anywhere in this analysis, with several wards more than twenty percentage points above expected. Katsina is also the state with the documented duplication problem, 38.9 per cent of facility visit records affected by a device handover, and the state where the verification gap, a tracing case closed on a card check with no record of what the card showed, has the most room to affect the underlying numbers. Kano, cleaner throughout, shows a flatter spread.
 
 This pattern is likely to recur beyond this one dataset. Ward-level analysis built on routine programme data tends to look most informative exactly where the underlying records are least reliable, since the same gaps that produce noisy data, incomplete enumeration, inconsistent verification, duplicate entries, can also produce the kind of extreme value a residual analysis is designed to detect. Cleaner data, by contrast, may simply show less variation, not because the underlying reality is more even, but because there is less room for error to generate an outlier. A reader working under time pressure has reason to focus on the largest numbers, even though those numbers may be the ones resting on the weakest evidence.
 
-The appropriate response is not a different statistical model but a verification step before any ward-level finding informs a resource decision. A flagged ward is a candidate for a field visit or a card check, not a confirmed priority, a distinction taken up directly in Section V. The same caution applies, in a different form, to the weather null just discussed: in both cases, the least reliable parts of the record are exactly where this thesis’s findings are hardest to take at face value.
+The appropriate response is not a different statistical model but a verification step before any ward-level finding informs a resource decision. A flagged ward is a candidate for a field visit or a card check, not a confirmed priority, a distinction taken up directly in Section V. The same caution applies, in a different form, to the weather null just discussed: in both cases, the least reliable parts of the record are exactly where this thesis's findings are hardest to take at face value.
 
 ## D. Demand-side scope as a critical lens
 
-This last point cuts in one direction throughout the section so far, toward where the data is too thin to confirm a finding. It is worth asking whether it also cuts the other way, toward an entire category of explanation this thesis has not been able to test at all. Section IV.B raised conflict and administrative disruption as a shock potentially severe enough to crowd out a gentler one, weather, in shaping caregiver behaviour. The same mechanism plausibly operates on the supply side, and here the evidence is more direct. Nigeria’s national vaccine logistics dashboard, introduced in 2014, found that gaps in stock reporting concentrated specifically in conflict-affected areas, where basic primary healthcare delivery is itself disrupted (World Economic Forum, 2014). Separate survey work in Ile-Ife, southwest Nigeria, found that fewer than a third of vaccinators at immunisation clinics kept any record of vaccine stock-on-hand at all. Weak supply-side recordkeeping, in other words, is not a unique limitation of MCHTrack. It reflects a broader pattern across Nigerian routine immunisation delivery.
+This last point cuts in one direction throughout the section so far, toward where the data is too thin to confirm a finding. It is worth asking whether it also cuts the other way, toward an entire category of explanation this thesis has not been able to test at all. Section IV.B raised conflict and administrative disruption as a shock potentially severe enough to crowd out a gentler one, weather, in shaping caregiver behaviour. The same mechanism plausibly operates on the supply side, and here the evidence is more direct. Nigeria's national vaccine logistics dashboard, introduced in 2014, found that gaps in stock reporting concentrated specifically in conflict-affected areas, where basic primary healthcare delivery is itself disrupted (World Economic Forum, 2014). Separate survey work in Ile-Ife, southwest Nigeria, found that fewer than a third of vaccinators at immunisation clinics kept any record of vaccine stock-on-hand at all. Weak supply-side recordkeeping, in other words, is not a unique limitation of MCHTrack. It reflects a broader pattern across Nigerian routine immunisation delivery.
 
-This blind spot is not hypothetical, and its scale may be larger than it first appears. A Missed Opportunities for Vaccination assessment in Ondo State, using exit interviews with caregivers who had already reached a health facility, found that 32.8 per cent left without receiving an indicated vaccine. The overwhelming majority of these missed opportunities occurred during visits made for an unrelated reason, where no one offered the vaccine, rather than during a vaccination visit where the vaccine itself was unavailable on the day. MCHTrack has no equivalent mechanism for capturing this. A facility visits row in this dataset is created only when a vaccination is actually administered, so a caregiver who reaches a clinic and leaves without one, whether through a stockout, an overlooked opportunity, or some other failure at the point of contact, leaves no trace at all. The scale of this gap cannot be estimated from MCHTrack’s own records, but evidence from elsewhere in Nigeria suggests it is unlikely to be small.
+This blind spot is not hypothetical, and its scale may be larger than it first appears. A Missed Opportunities for Vaccination assessment in Ondo State, using exit interviews with caregivers who had already reached a health facility, found that 32.8 per cent left without receiving an indicated vaccine. The overwhelming majority of these missed opportunities occurred during visits made for an unrelated reason, where no one offered the vaccine, rather than during a vaccination visit where the vaccine itself was unavailable on the day. MCHTrack has no equivalent mechanism for capturing this. A facility visits row in this dataset is created only when a vaccination is actually administered, so a caregiver who reaches a clinic and leaves without one, whether through a stockout, an overlooked opportunity, or some other failure at the point of contact, leaves no trace at all. The scale of this gap cannot be estimated from MCHTrack's own records, but evidence from elsewhere in Nigeria suggests it is unlikely to be small.
 
 This returns the discussion to the weather null in Section IV.B, this time from the supply side rather than the demand side. A flat relationship between weather and visit counts could mean caregivers are genuinely undeterred by heat or rainfall. It could equally mean that a real weather effect on caregiver attempts is being diluted by a supply-side and system-side gap of unknown but plausibly substantial size, the same gap the Ondo State exit interviews suggest exists elsewhere in the country. MCHTrack cannot distinguish a quiet day caused by low demand from a quiet day caused by caregivers arriving and being turned away. The null finding in Section IV.B should be read with this ambiguity attached, not as a clean statement that weather has no bearing on care-seeking in this setting, but as a statement that this dataset, as currently structured, cannot rule the possibility out either.
 
 ## E. Closing synthesis: convergence across methods
 
-Three of this thesis’s findings, distance, timing, and recordkeeping, were each corroborated by field engagement at the point each came up above. Weather’s apparent irrelevance was corroborated in the same way, but by absence rather than agreement: nobody closest to the programme named it as a barrier either. None of this corroboration was gathered through a structured qualitative method. It was observed informally, and is used here only where it supports a finding that already stands on its own.
+Three of this thesis's findings, distance, timing, and recordkeeping, were each corroborated by field engagement at the point each came up above. Weather's apparent irrelevance was corroborated in the same way, but by absence rather than agreement: nobody closest to the programme named it as a barrier either. None of this corroboration was gathered through a structured qualitative method. It was observed informally, and is used here only where it supports a finding that already stands on its own.
 
 ```{r tab-4-3}
-
-# Table 4.3 — closing synthesis: quantitative finding against field observation
-# Source: Section IV.E. Convergence drawn from where each finding appeared
-# inline across Sections IV.A to IV.D. Field material is informal, not a
-# structured qualitative method.
-
-t43 <- tribble(
-  ~Theme,          ~Quantitative,                                                                          ~Field,                                                                                     ~Convergence,
-  "Distance",      "Predicts zero-dose status (β = 0.043 primary; 0.598 strict). No effect on recovery.",   "Coordinator: distance is the barrier to being found, not to being recovered by phone.",     "Agreement",
-  "Timing",        "SMS contact predicts recovery (β = 0.436). Days since last visit negative, weak.",       "Long-open cases described as harder to close; contact speed matters more than reach.",       "Agreement",
-  "Recordkeeping", "Strict recovery 22% vs permissive 43%. Off-network gap 38 pp Kano, 12.5 pp Katsina.",    "Card check closes a case with no record of what the card showed. Confirmed as protocol.",    "Agreement",
-  "Weather",       "Null across rainfall, heat, and NDVI, all specifications.",                              "No programme staff named weather as a barrier in any conversation, even when prompted.",     "Agreement by absence"
-)
-
+t43 <- show_tab("tab_4_3")
+if (!is.null(t43)) {
 t43 %>%
   kbl(
     col.names = c("Theme", "Quantitative finding", "Field observation", "Convergence"),
@@ -1001,22 +521,22 @@ t43 %>%
   column_spec(3, width = "26em", italic = TRUE, color = "#555") %>%
   column_spec(4, bold = TRUE, width = "9em") %>%
   row_spec(4, background = "#F7F7F7")
-
+}
 ```
 
-This agreement between a regression coefficient and an informal field account deserves to be taken seriously, but not overstated. It is not independent confirmation in any rigorous sense, since the field material was never collected with the structure that would require. What it offers instead is a check against a real risk of working with data like MCHTrack’s: a coefficient can be statistically significant and still tell you very little true about the world, simply because the data behind it is thin in the wrong places. Where the regression and the field account agreed, that risk looks smaller. Where they did not, the largest regression deviations in Section III.A.iii sat in the state with the least reliable records, and the supply-side gap raised in Section IV.D sits entirely outside what either the regression or the field engagement could see at all. This thesis has tried to treat both kinds of disagreement, and both kinds of silence, with the same weight as the agreements, rather than setting them aside. A dissertation built on routine digital health records must state plainly where those records can be relied upon and where they cannot.
+This agreement between a regression coefficient and an informal field account deserves to be taken seriously, but not overstated. It is not independent confirmation in any rigorous sense, since the field material was never collected with the structure that would require. What it offers instead is a check against a real risk of working with data like MCHTrack's: a coefficient can be statistically significant and still tell you very little true about the world, simply because the data behind it is thin in the wrong places. Where the regression and the field account agreed, that risk looks smaller. Where they did not, the largest regression deviations in Section III.A.iii sat in the state with the least reliable records, and the supply-side gap raised in Section IV.D sits entirely outside what either the regression or the field engagement could see at all. This thesis has tried to treat both kinds of disagreement, and both kinds of silence, with the same weight as the agreements, rather than setting them aside. A dissertation built on routine digital health records must state plainly where those records can be relied upon and where they cannot.
 
 # V. Conclusion and Recommendations
 
 ## A. Implications by driver
 
-This thesis asked what predicts zero-dose status and tracing effectiveness in MCHTrack. The two models answer differently. DATHARM’s two underlying problems, finding zero-dose children and getting them vaccinated once found, call for different fixes as a result.
+This thesis asked what predicts zero-dose status and tracing effectiveness in MCHTrack. The two models answer differently. DATHARM's two underlying problems, finding zero-dose children and getting them vaccinated once found, call for different fixes as a result.
 
-Distance is the strongest predictor of zero-dose status. It grows far stronger once the definition narrows to children with no vaccine contact at all. Continued or expanded outreach into the wards where physical distance is greatest stands the best chance of finding children the current system is most likely to miss. The household enumeration gap raised throughout this thesis adds urgency to this. DATHARM’s own Kano coordinator estimated that roughly one in five households go unreached during enumeration. If that estimate holds, the children furthest from a facility are plausibly also the children least likely to be found at all. The population this thesis can describe statistically is probably smaller than the population that needs reaching.
+Distance is the strongest predictor of zero-dose status. It grows far stronger once the definition narrows to children with no vaccine contact at all. Continued or expanded outreach into the wards where physical distance is greatest stands the best chance of finding children the current system is most likely to miss. The household enumeration gap raised throughout this thesis adds urgency to this. DATHARM's own Kano coordinator estimated that roughly one in five households go unreached during enumeration. If that estimate holds, the children furthest from a facility are plausibly also the children least likely to be found at all. The population this thesis can describe statistically is probably smaller than the population that needs reaching.
 
-Distance loses almost all of this predictive power once a child is flagged and a tracing attempt begins. SMS and phone contact do the work of recovery, not physical reach. Investment in contact infrastructure, working numbers, message delivery, is likely to do more for recovery than investment in physical reach would. This should not be applied uniformly across both states, however. SMS outperforms home visits in Katsina; the reverse holds in Kano. DATHARM’s existing practice of treating method choice as a local operational decision, rather than a fixed national protocol, already reflects the right instinct.
+Distance loses almost all of this predictive power once a child is flagged and a tracing attempt begins. SMS and phone contact do the work of recovery, not physical reach. Investment in contact infrastructure, working numbers, message delivery, is likely to do more for recovery than investment in physical reach would. This should not be applied uniformly across both states, however. SMS outperforms home visits in Katsina; the reverse holds in Kano. DATHARM's existing practice of treating method choice as a local operational decision, rather than a fixed national protocol, already reflects the right instinct.
 
-The clearest single recommendation in this thesis concerns recovery reporting itself. Recovery measured strictly, on confirmed in-network vaccination, sits at 22 per cent. Measured permissively, including unverified off-network care, it rises to 43 per cent. Neither figure is wrong. They answer different questions. The gap between them is large enough to change how a funder or DATHARM’s own leadership might judge the programme’s performance. Any reported recovery figure should state which definition produced it, and where possible, both figures should be reported side by side. The gap was never hidden in the data. It was only ever uncollapsed.
+The clearest single recommendation in this thesis concerns recovery reporting itself. Recovery measured strictly, on confirmed in-network vaccination, sits at 22 per cent. Measured permissively, including unverified off-network care, it rises to 43 per cent. Neither figure is wrong. They answer different questions. The gap between them is large enough to change how a funder or DATHARM's own leadership might judge the programme's performance. Any reported recovery figure should state which definition produced it, and where possible, both figures should be reported side by side. The gap was never hidden in the data. It was only ever uncollapsed.
 
 ## B. What remains unresolved about weather, and why
 
@@ -1024,13 +544,13 @@ Section IV.B offered five explanations for why weather shows no detectable effec
 
 This thesis cannot choose between these five. The temptation to choose anyway is worth resisting on purpose. A single registry, two states, and twenty months of data are not enough to adjudicate between five mechanisms operating at different scales, the household, the day, the region. Conflict dominance is the strongest candidate by reputation, and picking it as the answer would have produced a tidier conclusion. It would also have been a false one, since nothing in this thesis actually rules out the other four. A confidently resolved null would have been easier to write and harder to defend under scrutiny. Five named, evidenced candidates attached to an honestly unresolved null describe more accurately what a single study of this kind can establish. Each one also points to a specific gap in what was measured, rather than a vague call for more research, which leaves a clearer trail for whoever tests this relationship next.
 
-Two of the five point directly to what that next step should capture. If heat’s effect operates within a day rather than across days, MCHTrack would need a time-of-day field, not just a date, to find it. If conflict and disrupted administration crowd out weather as a demand-side shock, the same disruption plausibly affects supply. A programme blind to stockouts and missed opportunities cannot rule that out either. Both possibilities are addressed directly in the recommendations below.
+Two of the five point directly to what that next step should capture. If heat's effect operates within a day rather than across days, MCHTrack would need a time-of-day field, not just a date, to find it. If conflict and disrupted administration crowd out weather as a demand-side shock, the same disruption plausibly affects supply. A programme blind to stockouts and missed opportunities cannot rule that out either. Both possibilities are addressed directly in the recommendations below.
 
 ## C. Limitations
 
-Four limitations have run through this thesis and are worth gathering here. MCHTrack records children who are found, not children who exist. The household enumeration gap has no field anywhere in the system, and every zero-dose count inherits it silently. Katsina’s facility visit records carry a documented duplication problem, 38.9 per cent of records affected by a device handover, worked around in this thesis but not repaired. Recovery can be confirmed by a card check with no record of what the card showed, producing the strict-versus-permissive gap discussed above. This analysis also tested demand-side explanations only. It has no visibility into stockouts, cold-chain failures, or staffing gaps, and evidence from elsewhere in Nigeria suggests this blind spot is unlikely to be small.
+Four limitations have run through this thesis and are worth gathering here. MCHTrack records children who are found, not children who exist. The household enumeration gap has no field anywhere in the system, and every zero-dose count inherits it silently. Katsina's facility visit records carry a documented duplication problem, 38.9 per cent of records affected by a device handover, worked around in this thesis but not repaired. Recovery can be confirmed by a card check with no record of what the card showed, producing the strict-versus-permissive gap discussed above. This analysis also tested demand-side explanations only. It has no visibility into stockouts, cold-chain failures, or staffing gaps, and evidence from elsewhere in Nigeria suggests this blind spot is unlikely to be small.
 
-A further limitation concerns what could not be measured even in principle. Household socioeconomic status, maternal education, and birth order are absent from MCHTrack’s fields entirely. The system also has no way to check whether a caregiver’s account of a vaccination history was accurate or approximate, a real source of error wherever a vaccine is identified informally rather than by name.
+A further limitation concerns what could not be measured even in principle. Household socioeconomic status, maternal education, and birth order are absent from MCHTrack's fields entirely. The system also has no way to check whether a caregiver's account of a vaccination history was accurate or approximate, a real source of error wherever a vaccine is identified informally rather than by name.
 
 None of this is unique to MCHTrack. Three observations are likely to recur in any community-based digital immunisation tracking system built on a similar design. Ward-level analysis built on this kind of data tends to look most informative exactly where the underlying records are least reliable. Any system allowing a case to close on an unverified confirmation step will generate a gap between what it reports and what it can prove. A system built around demand-side identification will, by construction, be blind to supply-side failure. The three describe the same underlying risk from different angles. A system can look more trustworthy than it is, through a dramatic statistic, a clean-looking recovery rate, or a quiet stretch of records. In each case, the very gap that should raise suspicion is what produces the reassuring appearance in the first place. Organisations running similar programmes elsewhere may find these three questions useful to ask of their own data before treating any of the three appearances at face value.
 
@@ -1038,9 +558,9 @@ The specific numbers in this thesis belong to Kano and Katsina in this period. T
 
 ## D. Future research directions
 
-Three directions extend beyond this thesis’s specific dataset and setting.
+Three directions extend beyond this thesis's specific dataset and setting.
 
-The first concerns whether weather affects immunisation-seeking behaviour in this regional context at all. Answering that question properly requires a design built to test it directly, rather than infer it from data collected for another purpose. Twenty months of data across two states cannot separate the five explanations raised in Section V.B from one another, and cannot rule out that a longer, wider dataset would detect an effect this one was simply not positioned to see. A study spanning several years rather than twenty months would let weather variation move independently of any single conflict episode or single religious calendar cycle, rather than being confounded with whatever happened to coincide with this particular window. Coverage across more states, or a comparable registry spanning a wider footprint of the Sahel, would give a design enough range to compare high-conflict against low-conflict wards, or agricultural-peak against dry-season periods, with the statistical power this thesis’s sample could not support. Most importantly, such a study would need to measure the channels this thesis could only name. A time-of-day field would test whether heat shifts visit timing rather than presence. A ward-level conflict-exposure measure would test whether instability crowds out weather sensitivity. A seasonal labour-calendar variable would test the labour-capacity account directly. Even a simple stockout indicator would test whether a null result reflects unmeasured supply failure rather than the absence of a true weather effect.
+The first concerns whether weather affects immunisation-seeking behaviour in this regional context at all. Answering that question properly requires a design built to test it directly, rather than infer it from data collected for another purpose. Twenty months of data across two states cannot separate the five explanations raised in Section V.B from one another, and cannot rule out that a longer, wider dataset would detect an effect this one was simply not positioned to see. A study spanning several years rather than twenty months would let weather variation move independently of any single conflict episode or single religious calendar cycle, rather than being confounded with whatever happened to coincide with this particular window. Coverage across more states, or a comparable registry spanning a wider footprint of the Sahel, would give a design enough range to compare high-conflict against low-conflict wards, or agricultural-peak against dry-season periods, with the statistical power this thesis's sample could not support. Most importantly, such a study would need to measure the channels this thesis could only name. A time-of-day field would test whether heat shifts visit timing rather than presence. A ward-level conflict-exposure measure would test whether instability crowds out weather sensitivity. A seasonal labour-calendar variable would test the labour-capacity account directly. Even a simple stockout indicator would test whether a null result reflects unmeasured supply failure rather than the absence of a true weather effect.
 
 The second concerns whether heat affects preventive and curative care-seeking differently. The existing literature on heat and healthcare utilisation is large, but concentrated almost entirely on illness-driven demand. Heat has been linked repeatedly to increased hospital admissions for dehydration, cardiovascular events, and respiratory conditions across high-income settings. Siddiqi et al. and Samano et al. remain the rare exceptions testing heat against scheduled rather than illness-driven care, and they reach different conclusions from each other and from this thesis. Whether that divergence reflects setting, care type, or simply underpowered data in at least one of the three studies is not yet answerable, and a deliberately designed comparison would be needed before treating any one of the three findings as more representative than another.
 
@@ -1050,68 +570,68 @@ MCHTrack was built to find children the health system was missing. This thesis s
 
 # Bibliography
 
-Bergé, L. (2018) ‘Efficient estimation of maximum likelihood models with multiple fixed-effects: the R package FENmlm’, CREA Discussion Papers, 13.
+Bergé, L. (2018) 'Efficient estimation of maximum likelihood models with multiple fixed-effects: the R package FENmlm', CREA Discussion Papers, 13.
 
-Blanford, J.I., Kumar, S., Luo, W. and MacEachren, A.M. (2012) ‘It’s a long, long walk: accessibility to hospitals, maternity and integrated health centers in Niger’, International Journal of Health Geographics, 11, p. 24.
+Blanford, J.I., Kumar, S., Luo, W. and MacEachren, A.M. (2012) 'It's a long, long walk: accessibility to hospitals, maternity and integrated health centers in Niger', International Journal of Health Geographics, 11, p. 24.
 
-Bolarinwa, O.A., Salaudeen, G.A., Lar, L., Alhaffar, M., Abdelmagid, N., McGowan, C.R., Adesoro, O., Valentine, P., Ahmed, T., Clarke, A., Makunja, S. and Akande, T.M. (2025) ‘Barriers and enablers to childhood immunization in high zero-dose burden communities in Kano and Lagos states, Nigeria’, Vaccine, 64, p. 127754.
+Bolarinwa, O.A., Salaudeen, G.A., Lar, L., Alhaffar, M., Abdelmagid, N., McGowan, C.R., Adesoro, O., Valentine, P., Ahmed, T., Clarke, A., Makunja, S. and Akande, T.M. (2025) 'Barriers and enablers to childhood immunization in high zero-dose burden communities in Kano and Lagos states, Nigeria', Vaccine, 64, p. 127754.
 
 Bwire, G. et al. (2021) ward-level cholera and administrative geography data, Kano State, Nigeria. [Citation requires direct verification against primary source before final submission.]
 
-Carnell, M.A. and Guyon, A.B. (1990) ‘Nutritional status, migration, mortality, and measles vaccine coverage during the 1983–1985 drought period: Timbuktu, Mali’, Journal of Tropical Pediatrics, 36(3), pp. 109–113.
+Carnell, M.A. and Guyon, A.B. (1990) 'Nutritional status, migration, mortality, and measles vaccine coverage during the 1983–1985 drought period: Timbuktu, Mali', Journal of Tropical Pediatrics, 36(3), pp. 109–113.
 
 DATHARM (2026) MCHTrack for Zero Dose Project. Available at: https://datharm.org/ (Accessed: June 2026).
 
-Etim, E.E., Odiachi, A., Dougherty, L., Alabi, M., Adetunji, A. and Adedimeji, A. (2025) ‘Understanding caregivers’ and community influencers’ perspectives on the barriers to childhood immunisation in Northern Nigerian States with public-private partnerships in routine immunisation programme’, BMC Public Health, 25, p. 1471.
+Etim, E.E., Odiachi, A., Dougherty, L., Alabi, M., Adetunji, A. and Adedimeji, A. (2025) 'Understanding caregivers' and community influencers' perspectives on the barriers to childhood immunisation in Northern Nigerian States with public-private partnerships in routine immunisation programme', BMC Public Health, 25, p. 1471.
 
-Fan, Y., Wang, J., Obradovich, N. and Zheng, S. (2023) ‘Intraday adaptation to extreme temperatures in outdoor activity’, Scientific Reports, 13, p. 473.
+Fan, Y., Wang, J., Obradovich, N. and Zheng, S. (2023) 'Intraday adaptation to extreme temperatures in outdoor activity', Scientific Reports, 13, p. 473.
 
-Farrenkopf, B.A., Zhou, X., Shet, A., Olayinka, F., Carr, K., Patenaude, B., Chido-Amajuoyi, O.G. and Wonodi, C. (2023) ‘Understanding household-level risk factors for zero dose immunization in 82 low- and middle-income countries’, PLOS One, 18(12), e0287459.
+Farrenkopf, B.A., Zhou, X., Shet, A., Olayinka, F., Carr, K., Patenaude, B., Chido-Amajuoyi, O.G. and Wonodi, C. (2023) 'Understanding household-level risk factors for zero dose immunization in 82 low- and middle-income countries', PLOS One, 18(12), e0287459.
 
-Fritz, M. (2022) ‘Temperature and non-communicable diseases: evidence from Indonesia’s primary health care system’, Health Economics, 31(11), pp. 2445–2464.
+Fritz, M. (2022) 'Temperature and non-communicable diseases: evidence from Indonesia's primary health care system', Health Economics, 31(11), pp. 2445–2464.
 
-GBD 2023 Vaccine Coverage Collaborators (2025) ‘Global, regional, and national trends in routine childhood vaccination coverage from 1980 to 2023 with forecasts to 2030: a systematic analysis for the Global Burden of Disease Study 2023’, The Lancet, 406(10500), pp. 235–260.
+GBD 2023 Vaccine Coverage Collaborators (2025) 'Global, regional, and national trends in routine childhood vaccination coverage from 1980 to 2023 with forecasts to 2030: a systematic analysis for the Global Burden of Disease Study 2023', The Lancet, 406(10500), pp. 235–260.
 
 Gavi, the Vaccine Alliance (2025) In Katsina, Nigeria, a homegrown mobile app is helping get vaccines to vulnerable kids. Available at: https://www.gavi.org/vaccineswork/ (Accessed: June 2026).
 
-Ghinai, I., Willott, C., Dadari, I. and Larson, H.J. (2013) ‘Listening to the rumours: what the northern Nigeria polio vaccine boycott can tell us ten years on’, Global Public Health, 8(10), pp. 1138–1150.
+Ghinai, I., Willott, C., Dadari, I. and Larson, H.J. (2013) 'Listening to the rumours: what the northern Nigeria polio vaccine boycott can tell us ten years on', Global Public Health, 8(10), pp. 1138–1150.
 
-Haque, M.R., Parr, N. and Muhidin, S. (2019) ‘Parents’ healthcare-seeking behavior for their children among the climate-related displaced population of rural Bangladesh’, Social Science & Medicine, 226, pp. 9–20.
+Haque, M.R., Parr, N. and Muhidin, S. (2019) 'Parents' healthcare-seeking behavior for their children among the climate-related displaced population of rural Bangladesh', Social Science & Medicine, 226, pp. 9–20.
 
-Jegede, A.S. (2007) ‘What led to the Nigerian boycott of the polio vaccination campaign?’, PLOS Medicine, 4(3), e73.
+Jegede, A.S. (2007) 'What led to the Nigerian boycott of the polio vaccination campaign?', PLOS Medicine, 4(3), e73.
 
 Johnson, F.A. (2022) [Ghana stunting / sub-national fixed-effects study citation requires direct verification before final submission.]
 
-Joseph, N.K., Macharia, P.M., Ouma, P.O., Mumo, J., Jalang’o, R., Wagacha, P.W., Achieng, V.O., Ndung’u, E., Okoth, P., Muñiz, M., Guigoz, Y., Panciera, R., Ray, N. and Okiro, E.A. (2020) ‘Spatial access inequities and childhood immunisation uptake in Kenya’, BMC Public Health, 20, p. 1407.
+Joseph, N.K., Macharia, P.M., Ouma, P.O., Mumo, J., Jalang'o, R., Wagacha, P.W., Achieng, V.O., Ndung'u, E., Okoth, P., Muñiz, M., Guigoz, Y., Panciera, R., Ray, N. and Okiro, E.A. (2020) 'Spatial access inequities and childhood immunisation uptake in Kenya', BMC Public Health, 20, p. 1407.
 
-Mantel, C., Hugo, C., Federici, C., Sano, N., Camara, S., Rodriguez, E., Castillo, L., Condo, J., Irakiza, P., Sabi, I., Nyanda, E., Olomi, W., Cavazza, M., Mangiaterra, V., Verykiou, M., Ferenchick, E., Torbica, A., Cherian, T. and Malvolti, S. (2025) ‘Impact of electronic immunization registries and electronic logistics management information systems in four low- and middle-income countries: Guinea, Honduras, Rwanda, and Tanzania’, Vaccine. doi: 10.1016/j.vaccine.2025.127066.
+Mantel, C., Hugo, C., Federici, C., Sano, N., Camara, S., Rodriguez, E., Castillo, L., Condo, J., Irakiza, P., Sabi, I., Nyanda, E., Olomi, W., Cavazza, M., Mangiaterra, V., Verykiou, M., Ferenchick, E., Torbica, A., Cherian, T. and Malvolti, S. (2025) 'Impact of electronic immunization registries and electronic logistics management information systems in four low- and middle-income countries: Guinea, Honduras, Rwanda, and Tanzania', Vaccine. doi: 10.1016/j.vaccine.2025.127066.
 
-Miraj, F., Iftikhar, S., Siddique, M., Dharma, V.K., Shah, M.T., Siddiqi, D.A. and Chandir, S. (2024) ‘Leveraging data from a provincial electronic immunization registry to analyze immunization coverage, timeliness, and defaulters among 8.8 million children from the 2018 to 2023 birth cohorts in Sindh Province, Pakistan’, Vaccines, 12(12), p. 1327.
+Miraj, F., Iftikhar, S., Siddique, M., Dharma, V.K., Shah, M.T., Siddiqi, D.A. and Chandir, S. (2024) 'Leveraging data from a provincial electronic immunization registry to analyze immunization coverage, timeliness, and defaulters among 8.8 million children from the 2018 to 2023 birth cohorts in Sindh Province, Pakistan', Vaccines, 12(12), p. 1327.
 
-Nagata, J.M., Epstein, A., Ganson, K.T., Benmarhnia, T. and Weiser, S.D. (2021) ‘Drought and child vaccination coverage in 22 countries in sub-Saharan Africa: a retrospective analysis of national survey data from 2011 to 2019’, PLOS Medicine, 18(9), e1003678.
+Nagata, J.M., Epstein, A., Ganson, K.T., Benmarhnia, T. and Weiser, S.D. (2021) 'Drought and child vaccination coverage in 22 countries in sub-Saharan Africa: a retrospective analysis of national survey data from 2011 to 2019', PLOS Medicine, 18(9), e1003678.
 
 National Primary Health Care Development Agency (NPHCDA) (2022) Zero-dose children data, Kano State. Abuja: NPHCDA.
 
-Parsons, J., Bryce, C. and Atherton, H. (2021) ‘Which patients miss appointments with general practice and the reasons why: a systematic review’, British Journal of General Practice, 71(707), e406–e412.
+Parsons, J., Bryce, C. and Atherton, H. (2021) 'Which patients miss appointments with general practice and the reasons why: a systematic review', British Journal of General Practice, 71(707), e406–e412.
 
-Sabahelzain, M.M., Dwyer, H., Abimbola, S. and Leask, J. (2025) ‘Implications of conflict on vaccination in the Sahel region’, BMJ Global Health, 10(1), e016496.
+Sabahelzain, M.M., Dwyer, H., Abimbola, S. and Leask, J. (2025) 'Implications of conflict on vaccination in the Sahel region', BMJ Global Health, 10(1), e016496.
 
-Samano, D., Saha, S., Kot, T.C., Potter, J.E. and Duthely, L.M. (2021) ‘Impact of extreme weather on healthcare utilization by people with HIV in metropolitan Miami’, International Journal of Environmental Research and Public Health, 18(5), p. 2442.
+Samano, D., Saha, S., Kot, T.C., Potter, J.E. and Duthely, L.M. (2021) 'Impact of extreme weather on healthcare utilization by people with HIV in metropolitan Miami', International Journal of Environmental Research and Public Health, 18(5), p. 2442.
 
-Siddiqi, D.A., Iftikhar, S., Anfossi, C.M., Siddique, M., Shah, M.T., Dharma, V.K., Mehmood, M., Setayesh, H., Sodhar, I.A., Malik, F.R. and Chandir, S. (2025) ‘Assessing the impact of heat waves on childhood immunization coverage in Sindh, Pakistan: insights from 132.4 million doses recorded in the provincial electronic immunization registry (2018–2024)’, Vaccine, 61, p. 127424.
+Siddiqi, D.A., Iftikhar, S., Anfossi, C.M., Siddique, M., Shah, M.T., Dharma, V.K., Mehmood, M., Setayesh, H., Sodhar, I.A., Malik, F.R. and Chandir, S. (2025) 'Assessing the impact of heat waves on childhood immunization coverage in Sindh, Pakistan: insights from 132.4 million doses recorded in the provincial electronic immunization registry (2018–2024)', Vaccine, 61, p. 127424.
 
 WHO/UNICEF (2024) Estimates of National Immunization Coverage (WUENIC). Geneva: World Health Organization.
 
-World Economic Forum (2014) Transforming Nigeria’s vaccine supply chain. Available at: https://www.weforum.org/stories/2014/12/transforming-nigerias-vaccine-supply-chain/ (Accessed: June 2026).
+World Economic Forum (2014) Transforming Nigeria's vaccine supply chain. Available at: https://www.weforum.org/stories/2014/12/transforming-nigerias-vaccine-supply-chain/ (Accessed: June 2026).
 
-Yau, I. and Zubair, M.M., cited in ‘Towards effective and efficient COVID-19 vaccination in Nigeria’ (2021) Journal of Global Health Reports. [Full original authorship requires direct verification before final submission.]
+Yau, I. and Zubair, M.M., cited in 'Towards effective and efficient COVID-19 vaccination in Nigeria' (2021) Journal of Global Health Reports. [Full original authorship requires direct verification before final submission.]
 
 ***Additional background sources consulted during drafting***
 
-The following sources were considered during the drafting of this thesis but are not cited in the final text, either because a more directly applicable source was identified through the verification process or because the source’s own findings did not support the claim originally drawn from it. They are retained here for transparency of the research process.
+The following sources were considered during the drafting of this thesis but are not cited in the final text, either because a more directly applicable source was identified through the verification process or because the source's own findings did not support the claim originally drawn from it. They are retained here for transparency of the research process.
 
-Eboreime, E., Abimbola, S. and Bozzani, F. (2015) ‘Access to routine immunization: a comparative analysis of supply-side disparities between northern and southern Nigeria’, PLOS One, 10(12), e0144876. [Considered for Section IV.D; removed following verification, as the paper’s own findings contradict the claim originally drawn from it.]
+Eboreime, E., Abimbola, S. and Bozzani, F. (2015) 'Access to routine immunization: a comparative analysis of supply-side disparities between northern and southern Nigeria', PLOS One, 10(12), e0144876. [Considered for Section IV.D; removed following verification, as the paper's own findings contradict the claim originally drawn from it.]
 
-Mohammed, Y., Reynolds, H.W., Waziri, H., Attahiru, A., Olowo-Okere, A., Kamateeka, M., Waziri, N.E., Garba, A.M., Corrêa, G.C., Garba, R., Vollmer, N. and Nguku, P. (2024) ‘Exploring the landscape of routine immunization in Nigeria: a scoping review of barriers and facilitators’, Vaccine X, 20, p. 100563. [Considered for Section II.A; removed following verification, as the paper’s scope does not support the specific caregiver-pathway claim originally drawn from it.]
+Mohammed, Y., Reynolds, H.W., Waziri, H., Attahiru, A., Olowo-Okere, A., Kamateeka, M., Waziri, N.E., Garba, A.M., Corrêa, G.C., Garba, R., Vollmer, N. and Nguku, P. (2024) 'Exploring the landscape of routine immunization in Nigeria: a scoping review of barriers and facilitators', Vaccine X, 20, p. 100563. [Considered for Section II.A; removed following verification, as the paper's scope does not support the specific caregiver-pathway claim originally drawn from it.]
 
-Wigley, A., Lorin, J., Hogan, D., Utazi, C.E., Hagedorn, B., Dansereau, E., Tatem, A.J. and Tejedor-Garavito, N. (2022) ‘Estimates of the number and distribution of zero-dose and under-immunised children across remote-rural, urban, and conflict-affected settings in low and middle-income countries’, PLOS Global Public Health, 2(10), e0001126. [Considered for Section I.C; superseded by Farrenkopf et al. (2023), a more directly applicable household-level determinants study.]
+Wigley, A., Lorin, J., Hogan, D., Utazi, C.E., Hagedorn, B., Dansereau, E., Tatem, A.J. and Tejedor-Garavito, N. (2022) 'Estimates of the number and distribution of zero-dose and under-immunised children across remote-rural, urban, and conflict-affected settings in low and middle-income countries', PLOS Global Public Health, 2(10), e0001126. [Considered for Section I.C; superseded by Farrenkopf et al. (2023), a more directly applicable household-level determinants study.]
