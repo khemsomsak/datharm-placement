@@ -310,6 +310,119 @@ cat("applied consistently to heat, precipitation and NDVI together.\n\n")
 
 #----------------------------------------------------------------------------
 
+#############################################
+# 5c. Exposure/offset + spline robustness   #
+# (Prabin Dahal, 15/7/2026 review)          #
+#############################################
+
+# Same two additions as 02_chirps_import_analysis.R Section 12b, same
+# reasoning — see that file's comments for the full explanation. Summary:
+# 1. Offset (c153/c152): no population denominator means this model
+#    explains raw visit COUNTS, not a RATE. enrolled_children (from
+#    01_mchtrack_import.R) is the best available proxy this pipeline has —
+#    a cumulative-registration stock, not a true point-in-time eligible
+#    count. Treat as a check, not a finished answer.
+# 2. Spline (c154): utci_dt_c (continuous heat) modelled linearly may miss
+#    a threshold effect. extreme_heat_38 is already a threshold/binary
+#    form, so it doesn't need a spline the way the continuous variable does.
+#
+# New models go into their own output file, NOT into 06_regression_daily.txt
+# or 06_regression_nb_comparison.txt — 10_visualizations.R reads specific
+# columns from both (col = 3/4 from the first, col = 1/2 from the second).
+# Changing either file's model list or order would silently break that.
+
+cat("=== EXPOSURE/OFFSET + SPLINE ROBUSTNESS — HEAT ===\n\n")
+
+lga_month_path <- file.path(mchtrack_dir, "01_panel_lga_month.rds")
+
+if (!file.exists(lga_month_path)) {
+  cat("MISSING INPUT:", lga_month_path, "\n")
+  cat("Skipping offset/spline robustness section — rerun 01_mchtrack_import.R first.\n\n")
+} else {
+  
+  # 01_panel_lga_month.rds's year_month is a character "%Y-%m" string
+  # (built via format() in 01_mchtrack_import.R). panel's year_month here
+  # is a <date> (inherited from the utci_daily join, likely first-of-month).
+  # Join on a derived character key on both sides rather than assuming the
+  # two already match — avoids a silent all-NA join if the formats ever
+  # drift apart again.
+  enrolled_lookup <- readRDS(lga_month_path) %>%
+    filter(state == "Kano") %>%
+    mutate(
+      lga_clean = str_to_title(str_remove(lga_name, regex("\\s*lga\\s*$", ignore_case = TRUE))),
+      ym_key    = as.character(year_month)
+    ) %>%
+    filter(lga_clean %in% c("Ungogo", "Gabasawa")) %>%
+    distinct(lga_clean, ym_key, enrolled_children)
+  
+  # Joined onto a COPY of panel, not the original — panel (and 06_panel_daily.rds/.csv
+  # saved in Section 7) stays exactly as it was before this section.
+  panel_off <- panel %>%
+    mutate(ym_key = format(year_month, "%Y-%m")) %>%
+    left_join(enrolled_lookup, by = c("lga_clean", "ym_key"))
+  
+  n_missing_exposure <- sum(is.na(panel_off$enrolled_children) | panel_off$enrolled_children <= 0)
+  cat("Daily rows missing a usable enrolled_children value:", n_missing_exposure,
+      "of", nrow(panel_off), "\n")
+  if (n_missing_exposure > 0) {
+    cat("These rows are dropped from the offset models below (log(0) or log(NA)\n")
+    cat("is undefined) — check enrolled_lookup coverage if this number is large.\n")
+  }
+  cat("\n")
+  
+  panel_off_valid <- panel_off %>% filter(!is.na(enrolled_children), enrolled_children > 0)
+  
+  # D3_off / D4_off: same FE structure as D3/D4 above, now with an offset
+  d3_off <- feols(log_visits ~ extreme_heat_38 | lga_clean + dow_num + ym_factor,
+                  data    = panel_off_valid,
+                  offset  = ~log(enrolled_children),
+                  cluster = ~lga_clean)
+  
+  d4_off <- feols(log_visits ~ utci_dt_c | lga_clean + dow_num + ym_factor,
+                  data    = panel_off_valid,
+                  offset  = ~log(enrolled_children),
+                  cluster = ~lga_clean)
+  
+  # NB counterpart with offset
+  d3_nb_off <- fenegbin(n_visits ~ extreme_heat_38 | lga_clean + dow_num + ym_factor,
+                        data    = panel_off_valid,
+                        offset  = ~log(enrolled_children),
+                        cluster = ~lga_clean)
+  
+  # Spline — continuous UTCI only, no offset (isolates the linearity
+  # question from the exposure question)
+  d4_spline <- feols(log_visits ~ splines::ns(utci_dt_c, df = 3) | lga_clean + dow_num + ym_factor,
+                     data    = panel,
+                     cluster = ~lga_clean)
+  
+  cat("--- D3/D4 (original) vs D3_off/D4_off (offset) vs D3_nb_off vs D4_spline ---\n\n")
+  etable(d3, d3_off, d3_nb_off, d4, d4_off, d4_spline,
+         title    = "Heat robustness — offset and spline specifications",
+         digits   = 4,
+         se.below = TRUE)
+  
+  modelsummary(
+    list(
+      "D3_off: binary heat, offset"        = d3_off,
+      "D3_nb_off: NB binary heat, offset"  = d3_nb_off,
+      "D4_off: continuous UTCI, offset"    = d4_off,
+      "D4_spline: continuous UTCI, spline (no offset)" = d4_spline
+    ),
+    stars   = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+    gof_map = c("nobs", "r.squared"),
+    title   = "Heat — exposure-offset and spline robustness (Prabin, 15/7/2026)",
+    output  = file.path(out_dir, "06_regression_daily_robustness_prabin.txt")
+  )
+  
+  cat("\nTable saved to:", file.path(out_dir, "06_regression_daily_robustness_prabin.txt"), "\n")
+  cat("Compare extreme_heat_38 / utci_dt_c coefficient sign, magnitude and\n")
+  cat("significance across all columns against the original D3/D4 results in\n")
+  cat("06_regression_daily.txt before concluding the offset or the spline\n")
+  cat("changes anything for this variable.\n\n")
+}
+
+#----------------------------------------------------------------------------
+
 ###################################
 # 6. Visualisations               #
 ###################################
@@ -464,6 +577,11 @@ saveRDS(panel, file.path(out_dir, "06_panel_daily.rds"))
 write_csv(panel, file.path(out_dir, "06_panel_daily.csv"))
 
 cat("Panel saved:", nrow(panel), "LGA-day observations\n")
+cat("Also saved: 06_regression_daily_robustness_prabin.txt (offset + spline, Section 5c)\n")
+cat("Reminder: enrolled_children (Section 5c) is a cumulative-registration\n")
+cat("stock, not a true point-in-time exposure count — treat the offset models\n")
+cat("as the best available check with this pipeline's current data, not a\n")
+cat("finished answer to Prabin's exposure-term comment.\n")
 cat("\n--- Script complete ---\n")
 
 #----------------------------------------------------------------------------

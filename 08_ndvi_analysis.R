@@ -1,17 +1,8 @@
-########################################################
-#  NDVI Import, Cleaning, Diagnostic & Regression      #
-#  Source: HDX Nigeria Subnational NDVI (5-year)       #
-#  Coverage: All Nigeria LGAs, dekadal, 2022-2026      #
-#  Purpose: Agricultural calendar exposure variable    #
-#  for immunisation health-seeking behaviour analysis  #
-#  Created: June 2026                                  #
-#  Last Updated 13/7/2026 — renamed from               #
-#  8_ndvi_analysis.R, which was an exact duplicate of  #
-#  07_ndvi_import.R with no regression code. Sections  #
-#  10-16 below are new — this is the first version of  #
-#  this file that actually contains the NDVI-visits    #
-#  regression the filename has always implied.         #
-########################################################
+########################################
+#  08_ndvi_analysis.R                  #
+#  Created: June 2026                  #
+#  Updated: 15/7/2026                  #
+########################################
 
 # Reset environment -----------------------------------------------------
 
@@ -710,6 +701,127 @@ cat("Prabin, and applied consistently to all three weather variables.\n\n")
 
 #----------------------------------------------------------------------------
 
+#############################################
+# 13b. Exposure/offset + spline robustness  #
+# (Prabin Dahal, 15/7/2026 review)          #
+#############################################
+
+# Same two additions as 02_chirps_import_analysis.R Section 12b and
+# 06_era5_analysis.R Section 5c — see those files' comments for the full
+# reasoning. Summary:
+# 1. Offset (c153/c152): no population denominator means this model
+#    explains raw visit COUNTS, not a RATE. enrolled_children (from
+#    01_mchtrack_import.R) is the best available proxy this pipeline has —
+#    a cumulative-registration stock, not a true point-in-time eligible
+#    count. Treat as a check, not a finished answer.
+# 2. Spline (c154): vim_c modelled linearly may miss a threshold or
+#    non-monotonic relationship (e.g. an agricultural-season effect that
+#    isn't a straight line through the year).
+#
+# Applied to N4 (vim_c, LGA + month-year FE) and N2 (viq_c, LGA + month-year
+# FE) — the two richest-FE specs above — not N1/N3, to match the pattern
+# used for heat's D3/D4. Kano-primary panel only, same as Sections 9-13;
+# the Katsina sensitivity check in Section 14 below is left untouched.
+#
+# New models go into their own output file, NOT into 08_regression_ndvi_kano.txt
+# or 08_regression_ndvi_nb_comparison.txt — 10_visualizations.R reads
+# specific columns from both (col = 1/2 from the first, col = 1/2 from the
+# second). Changing either file's model list or order would silently break
+# that parsing.
+
+cat("=== EXPOSURE/OFFSET + SPLINE ROBUSTNESS — NDVI ===\n\n")
+
+lga_month_path <- file.path(mchtrack_dir, "01_panel_lga_month.rds")
+
+if (!file.exists(lga_month_path)) {
+  cat("MISSING INPUT:", lga_month_path, "\n")
+  cat("Skipping offset/spline robustness section — rerun 01_mchtrack_import.R first.\n\n")
+} else {
+  
+  # 01_panel_lga_month.rds's year_month is a character "%Y-%m" string.
+  # panel_ndvi_kano's year_month is a <date> (from year_month_date via
+  # floor_date() in Section 10) — same mismatch already hit and fixed in
+  # 06_era5_analysis.R, applied proactively here via a derived character
+  # key on both sides rather than assuming the types already match.
+  enrolled_lookup <- readRDS(lga_month_path) %>%
+    filter(state == "Kano") %>%
+    mutate(
+      lga_clean = str_to_title(str_remove(lga_name, regex("\\s*lga\\s*$", ignore_case = TRUE))),
+      ym_key    = as.character(year_month)
+    ) %>%
+    filter(lga_clean %in% c("Ungogo", "Gabasawa")) %>%
+    distinct(lga_clean, ym_key, enrolled_children)
+  
+  # Joined onto a COPY of panel_ndvi_kano, not the original — the original
+  # (and 08_panel_ndvi_kano.rds/.csv saved in Section 16) stays exactly as
+  # it was before this section.
+  panel_ndvi_off <- panel_ndvi_kano %>%
+    mutate(ym_key = format(year_month, "%Y-%m")) %>%
+    left_join(enrolled_lookup, by = c("lga_clean", "ym_key"))
+  
+  n_missing_exposure <- sum(is.na(panel_ndvi_off$enrolled_children) | panel_ndvi_off$enrolled_children <= 0)
+  cat("Monthly rows missing a usable enrolled_children value:", n_missing_exposure,
+      "of", nrow(panel_ndvi_off), "\n")
+  if (n_missing_exposure > 0) {
+    cat("These rows are dropped from the offset models below (log(0) or log(NA)\n")
+    cat("is undefined) — check enrolled_lookup coverage if this number is large.\n")
+  }
+  cat("\n")
+  
+  panel_ndvi_off_valid <- panel_ndvi_off %>% filter(!is.na(enrolled_children), enrolled_children > 0)
+  
+  # N4_off / N2_off: same FE structure as N4/N2 above, now with an offset
+  n4_off <- feols(log_visits ~ vim_c | lga_clean + ym_factor,
+                  data    = panel_ndvi_off_valid,
+                  offset  = ~log(enrolled_children),
+                  cluster = ~lga_clean)
+  
+  n2_off <- feols(log_visits ~ viq_c | lga_clean + ym_factor,
+                  data    = panel_ndvi_off_valid,
+                  offset  = ~log(enrolled_children),
+                  cluster = ~lga_clean)
+  
+  # NB counterpart with offset — vim only, matching n1_nb's exposure choice
+  n4_nb_off <- fenegbin(n_visits ~ vim_c | lga_clean + ym_factor,
+                        data    = panel_ndvi_off_valid,
+                        offset  = ~log(enrolled_children),
+                        cluster = ~lga_clean)
+  
+  # Spline — vim_c only, no offset (isolates the linearity question from
+  # the exposure question). df kept small given this is a monthly panel
+  # with a limited number of LGA-months.
+  n4_spline <- feols(log_visits ~ splines::ns(vim_c, df = 3) | lga_clean + ym_factor,
+                     data    = panel_ndvi_kano,
+                     cluster = ~lga_clean)
+  
+  cat("--- N4/N2 (original) vs N4_off/N2_off (offset) vs N4_nb_off vs N4_spline ---\n\n")
+  etable(n4, n4_off, n4_nb_off, n2, n2_off, n4_spline,
+         title    = "NDVI robustness — offset and spline specifications",
+         digits   = 4,
+         se.below = TRUE)
+  
+  modelsummary(
+    list(
+      "N4_off: vim_c, +month-year, offset"    = n4_off,
+      "N4_nb_off: NB vim_c, +month-year, offset" = n4_nb_off,
+      "N2_off: viq_c, +month-year, offset"    = n2_off,
+      "N4_spline: vim_c, +month-year, spline (no offset)" = n4_spline
+    ),
+    stars   = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+    gof_map = c("nobs", "r.squared"),
+    title   = "NDVI — exposure-offset and spline robustness (Prabin, 15/7/2026)",
+    output  = file.path(out_dir, "08_regression_ndvi_robustness_prabin.txt")
+  )
+  
+  cat("\nTable saved to:", file.path(out_dir, "08_regression_ndvi_robustness_prabin.txt"), "\n")
+  cat("Compare vim_c / viq_c coefficient sign, magnitude and significance\n")
+  cat("across all columns against the original N4/N2 results in\n")
+  cat("08_regression_ndvi_kano.txt before concluding the offset or the\n")
+  cat("spline changes anything for this variable.\n\n")
+}
+
+#----------------------------------------------------------------------------
+
 ##############################################################
 # 14. Katsina sensitivity check — NOT the primary analysis   #
 ##############################################################
@@ -868,6 +980,7 @@ if (exists("panel_ndvi_katsina") && nrow(panel_ndvi_katsina) > 0) {
 cat("All analysis outputs saved to:", out_dir, "\n")
 cat("  08_regression_ndvi_kano.txt\n")
 cat("  08_regression_ndvi_nb_comparison.txt\n")
+cat("  08_regression_ndvi_robustness_prabin.txt   <- offset + spline, see Section 13b\n")
 cat("  08_regression_ndvi_katsina_sensitivity.txt   (if Katsina panel >= 20 rows)\n")
 cat("  08_ndvi_visits_kano.png\n")
 cat("  08_panel_ndvi_kano.rds / .csv\n")
@@ -877,5 +990,9 @@ cat("--- Script complete ---\n")
 cat("This file now contains the regression analysis its filename has always\n")
 cat("implied. 07_ndvi_import.R remains the import-only version — no need to\n")
 cat("keep 8_ndvi_analysis.R (the old duplicate) once this file replaces it.\n")
+cat("Reminder: enrolled_children (Section 13b) is a cumulative-registration\n")
+cat("stock, not a true point-in-time exposure count — treat the offset models\n")
+cat("as the best available check with this pipeline's current data, not a\n")
+cat("finished answer to Prabin's exposure-term comment.\n")
 
 #--------------------------(END)------------------------------#

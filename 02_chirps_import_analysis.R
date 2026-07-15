@@ -1,12 +1,8 @@
-########################################################
-#  CHIRPS Precipitation — Import, Clean & Regression   #
-#  Outcome: Daily/monthly facility visit counts, Kano  #
-#  Exposure: CHIRPS precipitation anomaly              #
-#  Sites: Ungogo & Gabasawa LGAs                       #
-#  Created on 13/5/2026                                #
-#  Last Updated 13/7/2026 — added analysis component,  #
-#  renamed from 02_chirps_import.R                     #
-########################################################
+########################################
+#  02_chirps_import_analysis.R         #
+#  Created: 13/5/2026                  #
+#  Updated: 15/7/2026                  #
+########################################
 
 # Reset environment -----------------------------------------------------
 
@@ -560,6 +556,129 @@ cat("\nTable saved to:", file.path(out_dir, "02_regression_precip_nb_comparison.
 
 #----------------------------------------------------------------------------
 
+#############################################
+# 12b. Exposure/offset + spline robustness  #
+# (Prabin Dahal, 15/7/2026 review)          #
+#############################################
+
+# Two of Prabin's comments, added here as NEW models alongside the existing
+# ones above, not replacements:
+#
+# 1. Offset/exposure term (c153/c152 in the reviewed draft): without a
+#    population denominator, this model explains raw visit COUNTS, not a
+#    visit RATE — Prabin's point is that "high temp/rainfall associated
+#    with increased visits" is not a claim this model can support as
+#    currently specified. enrolled_children (built in 01_mchtrack_import.R,
+#    Section 7) is the only denominator this pipeline currently produces —
+#    it is CUMULATIVE registered children per LGA up to that month, a
+#    stock, not a true point-in-time count of currently-eligible children.
+#    Treat this as the best available proxy, not a perfect exposure
+#    measure — flag this caveat wherever the offset models are cited.
+#
+# 2. Spline (c154): linear precip_anomaly_pct may miss a threshold or
+#    non-monotonic relationship. Added as ns(precip_anomaly_pct, df = 3)
+#    on the same primary daily specification (P4).
+#
+# Deliberately NOT written into 02_regression_precip_visits.txt or
+# 02_regression_precip_nb_comparison.txt above — 10_visualizations.R reads
+# specific column positions from both of those files (col = 1 and col = 4
+# for the visits table, col = 1/2 for the NB table). Changing their model
+# list or column order would silently break that parsing. These new models
+# go into their own output file instead.
+
+cat("=== EXPOSURE/OFFSET + SPLINE ROBUSTNESS — PRECIPITATION ===\n\n")
+
+lga_month_path <- file.path(mchtrack_dir, "01_panel_lga_month.rds")
+
+if (!file.exists(lga_month_path)) {
+  cat("MISSING INPUT:", lga_month_path, "\n")
+  cat("Skipping offset/spline robustness section — rerun 01_mchtrack_import.R first.\n\n")
+} else {
+  
+  enrolled_lookup <- readRDS(lga_month_path) %>%
+    filter(state == "Kano") %>%
+    mutate(
+      lga_clean = str_to_title(str_remove(lga_name, regex("\\s*lga\\s*$", ignore_case = TRUE)))
+    ) %>%
+    filter(lga_clean %in% c("Ungogo", "Gabasawa")) %>%
+    distinct(lga_clean, year_month, enrolled_children)
+  
+  # Joined onto COPIES of the panels, not the originals — panel_daily and
+  # panel_monthly (and the .rds/.csv exports built from them in Section 14)
+  # stay exactly as they were before this section, unaffected by whether
+  # this join works cleanly or not.
+  panel_daily_off <- panel_daily %>%
+    left_join(enrolled_lookup, by = c("lga_clean", "year_month"))
+  
+  panel_monthly_off <- panel_monthly %>%
+    left_join(enrolled_lookup, by = c("lga_clean", "year_month"))
+  
+  n_missing_exposure <- sum(is.na(panel_daily_off$enrolled_children) |
+                              panel_daily_off$enrolled_children <= 0)
+  cat("Daily rows missing a usable enrolled_children value:", n_missing_exposure,
+      "of", nrow(panel_daily_off), "\n")
+  if (n_missing_exposure > 0) {
+    cat("These rows are dropped from the offset models below (log(0) or log(NA)\n")
+    cat("is undefined) — check enrolled_lookup coverage if this number is large.\n")
+  }
+  cat("\n")
+  
+  panel_daily_off_valid   <- panel_daily_off   %>% filter(!is.na(enrolled_children), enrolled_children > 0)
+  panel_monthly_off_valid <- panel_monthly_off %>% filter(!is.na(enrolled_children), enrolled_children > 0)
+  
+  # P1_off / P4_off: same FE structure as P1/P4 above, now with an offset
+  p1_off <- feols(log_visits ~ precip_anomaly_pct | lga_clean,
+                  data    = panel_monthly_off_valid,
+                  offset  = ~log(enrolled_children),
+                  cluster = ~lga_clean)
+  
+  p4_off <- feols(log_visits ~ precip_anomaly_pct | lga_clean + dow_num + ym_factor,
+                  data    = panel_daily_off_valid,
+                  offset  = ~log(enrolled_children),
+                  cluster = ~lga_clean)
+  
+  # NB counterpart with offset — fenegbin's own offset argument, exposure
+  # enters the count model directly rather than via a log-visits transform
+  p4_nb_off <- fenegbin(n_visits ~ precip_anomaly_pct | lga_clean + dow_num + ym_factor,
+                        data    = panel_daily_off_valid,
+                        offset  = ~log(enrolled_children),
+                        cluster = ~lga_clean)
+  
+  # Spline — non-linear precip term, no offset (isolates the linearity
+  # question from the exposure question; combine the two only if both turn
+  # out to matter on their own)
+  p4_spline <- feols(log_visits ~ splines::ns(precip_anomaly_pct, df = 3) | lga_clean + dow_num + ym_factor,
+                     data    = panel_daily,
+                     cluster = ~lga_clean)
+  
+  cat("--- P4 (original, no offset) vs P4_off (with offset) vs P4_nb_off vs P4_spline ---\n\n")
+  etable(p4, p4_off, p4_nb_off, p4_spline,
+         title    = "Precipitation robustness — offset and spline specifications",
+         digits   = 4,
+         se.below = TRUE)
+  
+  modelsummary(
+    list(
+      "P1_off: Monthly, LGA FE, offset"     = p1_off,
+      "P4_off: Daily, primary FE, offset"   = p4_off,
+      "P4_nb_off: NB, primary FE, offset"   = p4_nb_off,
+      "P4_spline: Daily, primary FE, spline (no offset)" = p4_spline
+    ),
+    stars   = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+    gof_map = c("nobs", "r.squared"),
+    title   = "Precipitation — exposure-offset and spline robustness (Prabin, 15/7/2026)",
+    output  = file.path(out_dir, "02_regression_precip_robustness_prabin.txt")
+  )
+  
+  cat("\nTable saved to:", file.path(out_dir, "02_regression_precip_robustness_prabin.txt"), "\n")
+  cat("Compare the precip_anomaly_pct coefficient's sign, magnitude and\n")
+  cat("significance across all four columns against the original P4 result\n")
+  cat("in 02_regression_precip_visits.txt before concluding the offset or\n")
+  cat("the spline changes anything for this variable.\n\n")
+}
+
+#----------------------------------------------------------------------------
+
 ###################################
 # 13. Visualisations              #
 ###################################
@@ -656,6 +775,7 @@ cat("Panels saved:", nrow(panel_daily), "LGA-day rows,",
 cat("All analysis outputs saved to:", out_dir, "\n")
 cat("  02_regression_precip_visits.txt\n")
 cat("  02_regression_precip_nb_comparison.txt\n")
+cat("  02_regression_precip_robustness_prabin.txt   <- offset + spline, see Section 12b\n")
 cat("  02_precip_visits_panel.png\n")
 cat("  02_panel_daily.rds / .csv\n")
 cat("  02_panel_monthly.rds / .csv\n\n")
@@ -663,5 +783,9 @@ cat("  02_panel_monthly.rds / .csv\n\n")
 cat("--- Script complete ---\n")
 cat("Reminder: the pcode override in Section 4 needs independent verification\n")
 cat("against the OCHA shapefile before any number above is treated as final.\n")
+cat("Reminder: enrolled_children (Section 12b) is a cumulative-registration\n")
+cat("stock, not a true point-in-time exposure count — treat the offset models\n")
+cat("as the best available check with this pipeline's current data, not a\n")
+cat("finished answer to Prabin's exposure-term comment.\n")
 
 #--------------------------(END)------------------------------#
