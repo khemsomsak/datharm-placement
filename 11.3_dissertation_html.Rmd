@@ -1,0 +1,77 @@
+---
+title: "What a Community-Based Digital Surveillance System Reveals — and Conceals"
+subtitle: "Zero-Dose Status, Tracing Effectiveness, and Weather in Northern Nigeria"
+author: "Examination Candidate Number: [CANDIDATE NUMBER]"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: false
+    self_contained: true
+    css: |
+      body { font-family: "Georgia", "Times New Roman", serif; font-size: 15px; color: #1a1a1a; line-height: 1.7; max-width: 900px; margin: auto; padding: 2.5em; }
+      h1 { font-size: 1.5em; font-weight: bold; margin-top: 2.5em; margin-bottom: 0.6em; color: #10243b; border-bottom: 2px solid #1D6FA4; padding-bottom: 0.3em; }
+      h2 { font-size: 1.2em; font-weight: bold; margin-top: 1.8em; margin-bottom: 0.4em; color: #1D6FA4; }
+      h3 { font-size: 1.05em; font-weight: bold; font-style: italic; margin-top: 1.4em; margin-bottom: 0.3em; color: #333; }
+      p { text-align: justify; }
+      /* Figure/table commentary blurbs are plain markdown blockquotes (>) so
+         they survive conversion to BOTH html_document and pdf_document.
+         Do NOT replace these with raw <p class="..."> HTML — pandoc drops
+         raw HTML blocks when the output target isn't HTML, which is why
+         blurbs previously vanished/merged into body text in the PDF. */
+      blockquote { font-size: 0.85em; color: #555; line-height: 1.6; margin: 0.6em 0 1.6em 0; font-style: italic; border-left: 3px solid #dbe6f0; background: #f5f8fb; padding: 0.6em 1em; }
+      blockquote p { text-align: left; margin: 0; }
+      .table { font-size: 0.86em; margin: 1em 0; }
+      .table thead th { background-color: #1D6FA4; color: white; border-bottom: none; }
+      .table tbody td { vertical-align: middle; }
+      hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
+      .title { font-size: 1.7em !important; color: #10243b; }
+      .subtitle { font-size: 1.1em !important; color: #555; font-style: italic; }
+      caption, .caption { font-weight: bold; color: #10243b; }
+      .missing-artifact { color: #C0312D; font-weight: bold; border: 1px dashed #C0312D; padding: 0.6em 1em; background: #fdecea; }
+      .frontmatter { background: #f5f8fb; border: 1px solid #dbe6f0; border-radius: 6px; padding: 1.4em 1.8em; margin-bottom: 2em; }
+      .frontmatter h4 { margin-top: 1.2em; margin-bottom: 0.3em; color: #10243b; }
+      .frontmatter h4:first-child { margin-top: 0; }
+      .wordcount { font-style: italic; color: #555; }
+      .placeholder-flag { color: #BA7517; font-weight: bold; }
+      #references p { padding-left: 2em; text-indent: -2em; margin-bottom: 0.9em; }
+---
+
+```{r global-setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("_dissertation_setup.R")
+```
+
+<div class="frontmatter">
+
+**University of Oxford · Nuffield Department of Medicine**
+**MSc in International Health and Tropical Medicine**
+
+A dissertation submitted in partial fulfilment of the requirements for the degree of MSc in International Health and Tropical Medicine.
+
+<span class="wordcount">Word count: 12,293 (inclusive of visualisation placeholders and blurbs; exclusive of abstract, table of contents, list of figures, references and appendices, per Section 2.4.2 of the IHTM Exam Conventions).</span>
+
+<h4>Candidate's contribution to the project <span class="placeholder-flag">[PLACEHOLDER — replace before submission]</span></h4>
+
+[Insert here: exactly what you undertook on this project — analysis design, code, drafting — and what help you received and from whom (supervisors Prabin Dahal, Aisha Adamu, Lucy Harrison, Ernest; DATHARM CEO Amina Ahmad; Kano/Katsina coordinators; data manager Rahimat), plus a brief statement of research ethics approval. Maximum 500 words per Section 2.4.2.]
+
+<h4>Abstract</h4>
+
+**Background:** [placeholder — 1–2 sentences framing the zero-dose problem and MCHTrack]
+
+**Methods:** This thesis uses four linked datasets from DATHARM's MCHTrack programme, which combines community-health-worker-led identification, referral and defaulter tracing across Kano and Katsina, Nigeria, answering three questions via ward-level fixed-effects logistic regression (zero-dose status, recovery through defaulter tracing) and a count-based weather model (daily facility visits against rainfall, heat and vegetation).
+
+**Results:** Distance to a health facility is the most consistent predictor of zero-dose status, though its magnitude is highly sensitive to how zero-dose is defined (a non-significant ~4% higher odds per km under the primary definition vs. an 87% higher odds per km under a strict, no-contact-at-all definition). Recovery through defaulter tracing is driven almost entirely by SMS/phone contact rather than distance, and varies sharply by how "recovered" is defined (42.6% strict vs. 77.2% permissive, pooled). No weather variable shows a significant association with either zero-dose status or facility visit volume, a null that survives offset, spline and negative-binomial robustness checks.
+
+**Conclusion:** Routine administrative data of this kind is a genuinely useful but bounded evidence source: it reveals patterns survey-based literature cannot, but every finding is shaped by what the underlying system was built to record, and by what it silently leaves out.
+
+*(Structured abstract, maximum 300 words per Section 2.4.2 of the IHTM Exam Conventions — count and tighten before submission.)*
+
+</div>
+
+```{r child-body, child="_dissertation_body.Rmd"}
+```
