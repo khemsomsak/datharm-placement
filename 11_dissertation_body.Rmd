@@ -11,7 +11,11 @@ Zero-dose (ZD) children have received no dose of a diphtheria-tetanus-pertussis 
 
 An estimated 14.3 million children worldwide received no routine vaccinations in 2024 (WHO/UNICEF, 2024). Sub-Saharan Africa carries the largest share, over half of the global total (GBD 2023 Vaccine Coverage Collaborators, 2025). Nigeria alone holds roughly 2.1 million ZD children, the highest number for any single country (WHO/UNICEF, 2024). Kano and Katsina, this thesis's study sites, sit in Nigeria's far north within the Sahelian belt described below, among the states with the highest recorded ZD burden nationally (NPHCDA, 2022). Nigeria is divided into 36 states plus the Federal Capital Territory, each subdivided into local government areas (LGAs) and, within these, wards, the smallest administrative unit and the level at which MCHTrack's data is most granular. Kano is Nigeria's most populous state, with Katsina immediately to its northwest.
 
-**Figure 1.1. A map of Kano and Katsina states is not yet available for this draft.** Once included, it will locate both states within Nigeria and highlight the specific local government areas where MCHTrack operates, orienting readers unfamiliar with the country's administrative geography before the chapters that follow refer to specific states, LGAs and wards by name.
+```{r fig-1-1, fig.height=8.2, fig.width=9.5, dpi=150, fig.cap=fig_caption("fig_1_1")}
+show_fig("fig_1_1_path")
+```
+
+> Ward-level map of MCHTrack's footprint across Kano and Katsina, each point one ward sized by enrolled children. Point positions are randomly placed within the correct LGA and are not true facility coordinates, illustrative of coverage and density only. Labelled LGAs are the top three by enrolment in each state.
 
 The Sahel, the semi-arid belt stretching from Senegal to Sudan and encompassing Nigeria's far north, faces compounding pressures. Sabahelzain et al. (2025) synthesise conflict and coverage data across five Sahel countries between 2019 and 2023: drought, desertification and food insecurity on one side, a wave of military takeovers across Burkina Faso, Mali, Chad, Niger and Sudan since 2021 on the other. By 2023, Sudan's ZD rate reached 43 per cent, Mali's 22 per cent and Chad's 16 per cent — likely underestimates, since the surveys behind these figures struggle to reach the most conflict-affected areas (Sabahelzain et al., 2025). Vaccination coverage estimates also rely on outdated census projections: Sudan and Chad's last full censuses were conducted in 2008 and 2009 respectively. A highly mobile population compounds this: routine data systems struggle to track people who rarely stay in one place long enough to be counted.
 
@@ -54,6 +58,10 @@ This thesis sits at the intersection of the three literatures above, though not 
 This thesis therefore asks three questions. First, what individual and geographic characteristics predict zero-dose status among children enrolled in MCHTrack, and how the choice of zero-dose definition bounds what those predictors can show. Second, what predicts successful recovery through defaulter tracing, and to what extent do programme records support the recovery rates they report. Third, whether rainfall, heat and vegetation patterns explain any part of the variation in immunisation-seeking behaviour that the first two questions leave unexplained.
 
 These questions share a common thread: each asks not only what the data shows, but how far the data can be trusted to show it. The chapter that follows sets out the data and methods used to answer each question in turn.
+
+```{r pb-II, results='asis'}
+page_break()
+```
 
 # II. Data and Methods
 
@@ -153,6 +161,10 @@ show_fig("fig_2_3_path")
 
 Section III.C reports the negative-binomial comparison directly. The distributions of the main outcome and predictor variables were examined before any model was fitted, to confirm no variable behaves in a way that would undermine a linear specification on the log-odds or log-count scale; distributions showing no notable pattern are reported in an appendix rather than the main text.
 
+```{r pb-III, results='asis'}
+page_break()
+```
+
 # III. Quantitative Results
 
 ## 0. Descriptive data overview
@@ -165,7 +177,11 @@ show_fig("fig_3_2_path")
 
 > Waterfall from 101,312 raw linelisted rows: −7,744 duplicates removed at import, −19,860 non-child records, −831 missing/implausible distance, −1,590 Rimi LGA, leaving 71,287. A further 33 unattributed-LGA rows are not yet excluded (~71,254 once applied). The regression sample (70,477, reported in Table 3.1a) sits below this figure by roughly 800 rows for reasons not itemised in the waterfall itself.
 
-**Figure 3.2b. A state-split version of this waterfall (Kano vs. Katsina shown separately) is not yet available for this draft.** Once included, it will let a reader see whether the exclusion steps above fall unevenly across the two states, a question the pooled waterfall alone cannot answer.
+```{r fig-3-2b, fig.height=4.8, fig.width=9.4, dpi=150, fig.cap=fig_caption("fig_3_2b")}
+show_fig("fig_3_2b_path")
+```
+
+> The same waterfall shown separately for Kano and Katsina, letting the exclusion steps above be compared directly rather than pooled. Duplicate-row removal is the step most worth checking here, since Section II.A documents Katsina's duplication problem as a state-specific issue rather than one spread evenly across both states.
 
 Distance to the nearest health facility is heavily right-skewed across this sample, with a median well under a kilometre and a long tail of children living considerably further out; zero-dose children sit further along that tail than vaccinated children do, though the two distributions overlap substantially; a child can live close to a facility and still be missed. The recovery model draws on a separate sample of 38,913 tracing attempts, of which 16,132 can be matched to a prior facility visit date and so carry a usable lag-time value. The weather model's outcome, daily facility visit counts by LGA, is described separately in Section III.C, since its descriptive properties, heavy zero-inflation and marked overdispersion, motivate the modelling choice discussed in Section II.D rather than simply setting up the results that follow it.
 
@@ -210,6 +226,12 @@ show_fig("fig_3_4_path")
 ```
 
 > Lollipop chart of ward-level residuals, ordered by magnitude. Katsina's tail is long and dominated by Safana LGA wards; Kano's residuals cluster tightly near zero, with Maraku (Gabasawa) as its single largest outlier.
+
+```{r fig-3-4b, fig.height=8.4, fig.width=9.5, dpi=150, fig.cap=fig_caption("fig_3_4b")}
+show_fig("fig_3_4b_path")
+```
+
+> The same residuals mapped by ward rather than ranked in a list. Katsina's largest residuals, Wagini, Babban Duhu B, Kurfeji, Makera, Duwan Makau and Bakiyawa, cluster within Safana, Mani, Funtua and Batagarawa LGAs rather than scattering evenly across the state; Kano's residuals stay close to zero everywhere on the map. As the text below and Section IV.C both note, a large residual here is a candidate for field verification, not a confirmed allocation priority.
 
 This contrast should not be read as evidence that Katsina has more genuine pockets of unmet need than Kano. Katsina is also the state where a device handover produced duplicate records in 38.9 per cent of facility visits, a problem documented in Section II.A. A ward whose visit records were inflated or distorted by this duplication could show an artificially large residual having nothing to do with true underlying need. Kano's flatter spread, meanwhile, may simply reflect that the state's more even data quality leaves less room for any single ward to stand out, rather than indicating its zero-dose burden is genuinely more uniform. Taken together, the two states illustrate a limit of ward-level analysis built on routine programme data rather than a usable targeting map: the state with the most visually striking residuals is also the state whose underlying records are least trustworthy at this resolution, and the state whose records are most trustworthy shows too little variation to act on with confidence. Any ward flagged this way is better treated as a candidate for field verification than as a confirmed allocation priority, a point returned to in Section V.
 
@@ -257,6 +279,12 @@ show_fig("fig_3_7_path")
 ```
 
 > Strict vs. permissive recovery rate, split by state. The clearest single illustration of the verification gap: under the permissive definition a programme would claim roughly double what a strict, verifiable standard supports, and the overstatement varies sharply by state.
+
+```{r fig-3-7b, fig.height=8.2, fig.width=9.5, dpi=150, fig.cap=fig_caption("fig_3_7b")}
+show_fig("fig_3_7b_path")
+```
+
+> The same off-network share of recovery, mapped by ward, showing whether it clusters within particular LGAs or spreads evenly within each state, a distinction the pooled state-level comparison above cannot make visible on its own.
 
 This is the clearest single illustration in this thesis of the verification gap described in Section II.A. A programme reporting its recovery rate using the permissive definition, plausible given that the underlying protocol treats a card check as sufficient confirmation, would report a figure substantially higher than a stricter standard would support, a gap that has nothing to do with how well the tracing effort is actually working and everything to do with what the underlying records can verify.
 
@@ -325,6 +353,12 @@ show_fig("fig_weather_robustness_path")
 
 > Same coefficients as Table 3.3, plotted with CIs across the three specifications side by side. Facility- and LGA-level heterogeneity checks (not shown as a separate numbered table) found isolated significant effects at only one or two individual sites out of roughly twenty tested, consistent with noise rather than a systematic effect.
 
+```{r fig-weather-maps, fig.height=7, fig.width=15, dpi=150, fig.cap=fig_caption("fig_weather_maps")}
+show_fig("fig_weather_maps_path")
+```
+
+> Rainfall, heat and vegetation averaged by LGA across the full study window, giving the null result above a physical reference: what the landscape actually looks like, not just the coefficients. Panel B (heat) covers only Ungogo and Gabasawa in Kano, the full extent of the ERA5/UTCI panel used in the heat model, not a display choice.
+
 ### iii. Negative binomial comparison
 
 A negative binomial specification, the theoretically preferred alternative given the overdispersion confirmed above, was tested against all three weather variables as a further robustness check. Across precipitation, heat, and vegetation, the negative binomial specification agrees with the primary log-transformed OLS specification in direction and in the absence of significance. Log-transformed OLS is retained as the primary specification throughout this thesis for the reasons of consistency and interpretability set out in Section II.D, not because it performs better against this alternative.
@@ -336,6 +370,10 @@ render_simple_table(show_tab("tab_3_10"))
 ```
 
 > Log-OLS and negative binomial coefficients side by side for all three weather variables. Both specifications agree on direction and non-significance throughout; the precipitation variable is the closest either comes to a conventional threshold, and even there both specifications remain nominally within the nulled interpretation given in Section III.C.ii.
+
+```{r pb-IV, results='asis'}
+page_break()
+```
 
 # IV. Discussion and Synthesis
 
@@ -419,6 +457,10 @@ render_simple_table(show_tab("tab_4_3"), widths_em = c("22em", "20em", "10em"))
 
 This agreement between a regression coefficient and an informal field account deserves to be taken seriously, but not overstated. It is not independent confirmation in any rigorous sense, since the field material was never collected with the structure that would require. What it offers instead is a check against a real risk of working with data like MCHTrack's: a coefficient can be statistically significant and still tell you very little true about the world, simply because the data behind it is thin in the wrong places. Where the regression and the field account agreed, that risk looks smaller. Where they did not, the largest regression deviations in Section III.A.ii sat in the state with the least reliable records, and the supply-side gap raised in Section IV.D sits entirely outside what either the regression or the field engagement could see at all. This thesis has tried to treat both kinds of disagreement, and both kinds of silence, with the same weight as the agreements, rather than setting them aside. A dissertation built on routine digital health records must state plainly where those records can be relied upon and where they cannot.
 
+```{r pb-V, results='asis'}
+page_break()
+```
+
 # V. Conclusion and Recommendations
 
 ## A. Implications by driver
@@ -447,6 +489,10 @@ Two directions extend beyond this thesis's setting. The first is whether weather
 
 MCHTrack was built to find children the health system was missing. This thesis set out to do the same to the data itself, and to the question of weather riding alongside it. A record is not the same as the life it tries to follow. A null result is not the same as an absence. The distance between what was found and what remains unresolved is where the real work of reaching every child will always have to continue.
 
+```{r pb-refs, results='asis'}
+page_break()
+```
+
 # References
 
 Bergé, L. (2018) 'Efficient estimation of maximum likelihood models with multiple fixed-effects: the R package FENmlm', *CREA Discussion Papers*, 2018-13.
@@ -470,6 +516,8 @@ Fatiregun, A.A., Nic Lochlainn, L., Kaboré, L., Dosumu, M., Isere, E., Olaoye, 
 Federal Ministry of Health and National Primary Health Care Development Agency (2013) *National Routine Immunization Strategic Plan 2013–2015: Intensifying Reaching Every Ward through Accountability*. Abuja: Federal Republic of Nigeria.
 
 Fritz, M. (2022) 'Temperature and non-communicable diseases: evidence from Indonesia's primary health care system', *Health Economics*, 31(11), pp. 2445–2464.
+
+GADM (2026) *GADM database of Global Administrative Areas, version 4.1*. Available at: https://gadm.org (Accessed: July 2026).
 
 Gavi, the Vaccine Alliance (2025) *In Katsina, Nigeria, a homegrown mobile app is helping get vaccines to vulnerable kids*. Available at: https://www.gavi.org/vaccineswork/ (Accessed: June 2026).
 

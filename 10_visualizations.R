@@ -34,6 +34,9 @@ library(kableExtra)
 library(ggplot2)
 library(patchwork)
 library(scales)
+library(sf)
+library(geodata)
+library(ggrepel)
 
 #----------------------------------------------------------------------------
 
@@ -172,6 +175,139 @@ theme_datharm <- function(bs = 12.5) {
     plot.subtitle = element_text(color = "#666", size = bs - 2))
 }
 
+#----------------------------------------------------------------------------
+
+##############################
+# Geospatial helpers          #
+# (NEW, 19/7/2026 -- ported  #
+# from map_style_helpers.R    #
+# after standalone prototype  #
+# sign-off: fig_1_1,          #
+# fig_weather_maps,           #
+# fig_offnetwork_ward_map and #
+# fig_ward_residual_map)      #
+##############################
+# Every function below fixes a bug found and corrected during standalone
+# prototyping (see the four fig_*_prototype.R scripts' own headers for the
+# full history): NA-safe LGA name matching that rejects, rather than force-
+# fits, known wrong-state rows (02_chirps_import_analysis.R's own PCODE
+# VERIFICATION FLAG comment); NA_real_ (not bare NA, which is logical, not
+# numeric) in the point-sampling fallback; a length-guard on st_sample();
+# and a fail-loudly helper for empty results. Nothing here should need to
+# change again without a corresponding fix in the prototype scripts.
+
+gadm_cache <- file.path(home, "02_data/03_geodata")
+dir.create(gadm_cache, showWarnings = FALSE, recursive = TRUE)
+
+get_nga_boundaries <- function() {
+  nga_adm1 <- gadm(country = "NGA", level = 1, path = gadm_cache) %>% st_as_sf()
+  nga_adm2 <- gadm(country = "NGA", level = 2, path = gadm_cache) %>% st_as_sf()
+  list(adm1 = nga_adm1, adm2 = nga_adm2)
+}
+
+strip_lga_suffix <- function(x) x %>% str_remove("(?i)\\s*LGA$") %>% str_trim()
+
+match_lga_name <- function(name, state_name, lgas_sf) {
+  if (is.na(name) || is.na(state_name) || name == "") return(NA_character_)
+  candidates <- lgas_sf$NAME_2[lgas_sf$NAME_1 == state_name]
+  if (length(candidates) == 0) return(NA_character_)
+  if (name %in% candidates) return(name)
+  dists <- adist(tolower(name), tolower(candidates))[1, ]
+  if (all(is.na(dists))) return(NA_character_)
+  best_i <- which.min(dists)
+  best   <- candidates[best_i]
+  best_d <- dists[best_i]
+  # Plausibility check, not just "closest available" -- some LGAs are
+  # recorded under the WRONG state in the source data (Ungogo/Gabasawa/
+  # Kiru/Nassarawa/Madobi/Shanono/Warawa/Wudil, all real Kano LGAs,
+  # mislabelled Katsina in the pcode lookup table). A genuine near-match is
+  # either very close by edit distance or one name contains the other;
+  # anything worse is more likely a wrong-state row than a spelling
+  # variant, so it's dropped with a warning instead of guessed.
+  substr_ok <- str_detect(tolower(best), fixed(tolower(name))) ||
+    str_detect(tolower(name), fixed(tolower(best)))
+  if (best_d > 2 && !substr_ok) {
+    cat("  NO PLAUSIBLE MATCH for '", name, "' within ", state_name, "'s LGA list ",
+        "(closest was '", best, "', edit distance ", best_d, "). Dropping this row.\n", sep = "")
+    return(NA_character_)
+  }
+  cat("  Fuzzy-matched '", name, "' (", state_name, ") -> '", best, "'\n", sep = "")
+  best
+}
+
+sample_point_in_lga <- function(state_name, lga_name_matched, lgas_sf = kk_lgas) {
+  na_point <- st_sfc(st_point(c(NA_real_, NA_real_)), crs = st_crs(lgas_sf))
+  poly <- lgas_sf %>% filter(NAME_1 == state_name, NAME_2 == lga_name_matched)
+  if (nrow(poly) == 0) return(na_point)
+  pt <- st_sample(poly, size = 1, type = "random")
+  if (length(pt) != 1) return(na_point)
+  pt
+}
+
+stop_if_empty <- function(x, what) {
+  if (nrow(x) == 0) {
+    stop(what, " has zero rows after matching/filtering -- nothing to plot.", call. = FALSE)
+  }
+  invisible(x)
+}
+
+bbox_with_buffer <- function(sf_obj, buffer_pct = 0.08) {
+  bb <- st_bbox(sf_obj)
+  dx <- (bb["xmax"] - bb["xmin"]) * buffer_pct
+  dy <- (bb["ymax"] - bb["ymin"]) * buffer_pct
+  list(xlim = c(bb["xmin"] - dx, bb["xmax"] + dx), ylim = c(bb["ymin"] - dy, bb["ymax"] + dy))
+}
+
+theme_map_diss <- function(base_size = 12) {
+  theme_void(base_size = base_size) +
+    theme(
+      plot.title      = element_text(face = "bold", size = base_size + 2, hjust = 0.5, margin = margin(b = 8)),
+      plot.caption    = element_text(size = base_size - 3.5, colour = "#888", hjust = 0, margin = margin(t = 10), lineheight = 1.15),
+      legend.position = "bottom", legend.box = "horizontal",
+      legend.title    = element_text(size = base_size + 0.5, face = "bold"),
+      legend.text     = element_text(size = base_size),
+      legend.key.size = unit(1.3, "lines"), legend.spacing.x = unit(0.6, "cm"),
+      plot.margin     = margin(t = 10, r = 18, b = 8, l = 18)
+    )
+}
+
+geom_lga_labels <- function(label_df, label_col = "label", seed = 2026) {
+  geom_col_name <- attr(label_df, "sf_column")
+  list(ggrepel::geom_label_repel(
+    data = label_df, mapping = aes(label = .data[[label_col]], geometry = .data[[geom_col_name]]),
+    stat = "sf_coordinates", inherit.aes = FALSE, seed = seed, size = 3.1, family = "serif",
+    fontface = "bold", colour = "#222", fill = alpha("white", 0.75), label.size = 0,
+    label.padding = unit(0.15, "lines"), box.padding = unit(0.6, "lines"), point.padding = unit(0.3, "lines"),
+    min.segment.length = 0.15, segment.colour = "#888", segment.size = 0.3, max.overlaps = 20
+  ))
+}
+
+# Wider, evenly-spaced legend for binned colour/fill scales -- fixes
+# legend numbers rendering smushed together on the heat/UTCI and NDVI/VIM
+# panels, and (paired with scale_*_steps()/steps2() below instead of a
+# continuous gradient) makes mid-range values on the point maps visually
+# distinct from each other, not just from the two extremes of the scale.
+steps_guide <- function(barwidth = 6, barheight = 0.45) {
+  guide_coloursteps(barwidth = unit(barwidth, "cm"), barheight = unit(barheight, "cm"), show.limits = TRUE)
+}
+
+# Boundary fetch is a network call, not a local file -- wrapped so a
+# network hiccup at knit time degrades to placeholders for the 4 map
+# figures instead of halting this entire ~1750-line script.
+map_boundaries_loaded <- tryCatch({
+  bounds_geo <- get_nga_boundaries()
+  kk_states  <- bounds_geo$adm1 %>% filter(NAME_1 %in% c("Kano", "Katsina"))
+  kk_lgas    <- bounds_geo$adm2 %>% filter(NAME_1 %in% c("Kano", "Katsina"))
+  TRUE
+}, error = function(e) {
+  warning("Could not fetch GADM boundaries (network/geodata issue) -- all 4 map figures ",
+          "(fig_1_1, fig_3_4b, fig_3_7b, fig_weather_maps) will fall back to placeholders: ",
+          conditionMessage(e), call. = FALSE)
+  FALSE
+})
+
+#----------------------------------------------------------------------------
+
 suppressWarnings({
   for (loc in c("English", "en_US.UTF-8", "en_GB.UTF-8", "en_US", "C")) {
     if (!inherits(try(Sys.setlocale("LC_TIME", loc), silent = TRUE), "try-error")) {
@@ -277,6 +413,83 @@ if (tab31b_ok && !is.na(b_full_n) && !is.na(b_lag_n) && b_full_n == b_lag_n) {
           "exact symptom of the original bug. Check that 03_regression.R's ",
           "m_b0_full was actually rebuilt without days_since_visit.", call. = FALSE)
 }
+
+#----------------------------------------------------------------------------
+
+########################################
+# Figure 1.1 — MCHTrack footprint map  #
+# (NEW, 19/7/2026 -- ported from        #
+# fig_1_1_map_prototype.R after         #
+# standalone sign-off)                  #
+########################################
+# Ward-level footprint: one random point per ward (NOT true facility
+# coordinates -- illustrative of coverage/density only, see the standalone
+# prototype's own header note), sized by enrolled children. Rimi LGA is
+# INCLUDED here even though it's excluded from the regression analytic
+# sample elsewhere (rimi_flag/backfill, II.A) -- this figure describes
+# MCHTrack's overall operating footprint, not the analytic sample.
+
+ll_path_map <- file.path(mch_dir, "01_linelisted_clean.rds")
+if (map_boundaries_loaded && require_file(ll_path_map, "Figure 1.1 footprint map")) {
+  set.seed(2026)
+  ward_counts_11 <- readRDS(ll_path_map) %>%
+    filter(woman_or_child == "child") %>%
+    group_by(state, lga_name, facility_ward) %>%
+    summarise(enrolled_n = n(), .groups = "drop") %>%
+    filter(!is.na(lga_name), !is.na(facility_ward), enrolled_n > 0) %>%
+    mutate(lga_clean = strip_lga_suffix(lga_name)) %>%
+    rowwise() %>%
+    mutate(lga_matched = match_lga_name(lga_clean, state, kk_lgas)) %>%
+    ungroup()
+  
+  ward_pts_11 <- ward_counts_11 %>%
+    rowwise() %>%
+    mutate(geometry = list(sample_point_in_lga(state, lga_matched))) %>%
+    ungroup()
+  
+  ward_counts_11_sf <- st_as_sf(
+    ward_pts_11 %>% select(state, lga_name, facility_ward, enrolled_n, lga_matched),
+    geometry = do.call(c, ward_pts_11$geometry), crs = st_crs(kk_lgas)
+  ) %>% filter(!is.na(st_coordinates(.)[, 1]))
+  
+  if (nrow(ward_counts_11_sf) == 0) {
+    warning("Figure 1.1: no wards could be placed after LGA matching -- check the fuzzy-match log above.", call. = FALSE)
+    fig_1_1 <- placeholder_plot("NO WARDS MATCHED\nsee console log for LGA name-matching issues")
+  } else {
+    top_lgas_11 <- ward_counts_11_sf %>% st_drop_geometry() %>%
+      group_by(state, lga_matched) %>% summarise(total_n = sum(enrolled_n), .groups = "drop") %>%
+      group_by(state) %>% slice_max(total_n, n = 3) %>% ungroup()
+    
+    labels_11 <- kk_lgas %>% filter(NAME_2 %in% top_lgas_11$lga_matched) %>% st_centroid() %>%
+      left_join(top_lgas_11, by = c("NAME_1" = "state", "NAME_2" = "lga_matched")) %>%
+      filter(!is.na(total_n)) %>%
+      mutate(label = paste0(NAME_2, " (", comma(total_n), ")"))
+    
+    extent_11 <- bbox_with_buffer(kk_states, 0.06)
+    
+    fig_1_1 <- ggplot() +
+      geom_sf(data = bounds_geo$adm1, fill = "#F2F2F2", colour = "white", linewidth = 0.15) +
+      geom_sf(data = kk_states, fill = "#EAF1F8", colour = "#10243B", linewidth = 0.5) +
+      geom_sf(data = kk_lgas, fill = NA, colour = "#9AA7B4", linewidth = 0.2) +
+      geom_sf(data = ward_counts_11_sf, aes(size = enrolled_n, colour = state), alpha = 0.55) +
+      geom_lga_labels(labels_11, "label") +
+      scale_colour_manual(values = pal_state, name = "State") +
+      scale_size_continuous(name = "Enrolled children", range = c(1.5, 13), labels = comma) +
+      coord_sf(xlim = extent_11$xlim, ylim = extent_11$ylim, expand = FALSE, clip = "off") +
+      guides(colour = guide_legend(override.aes = list(size = 5))) +
+      labs(caption = paste0(
+        "Each point is one ward, sized by enrolled children (01_linelisted_clean.rds). Point positions are randomly\n",
+        "placed within the correct LGA and are NOT true facility coordinates -- illustrative of coverage and density\n",
+        "only. Labelled LGAs are the top 3 by total enrolment in each state. Administrative boundaries: GADM v4.1\n",
+        "(gadm.org).")) +
+      theme_map_diss(12)
+  }
+} else {
+  fig_1_1 <- placeholder_plot("MISSING INPUT\n01_linelisted_clean.rds, or GADM boundaries unavailable")
+}
+
+fig_titles[["fig_1_1"]] <- "Figure 1.1.  MCHTrack's ward-level footprint across Kano and Katsina"
+artifacts$fig_1_1_path <- save_fig(fig_1_1, "fig_1_1", width = 9.5, height = 8.2, dpi = 150)
 
 #----------------------------------------------------------------------------
 
@@ -799,6 +1012,89 @@ if (require_file(wr_path, "Figure 3.4 ward residuals")) {
 fig_titles[["fig_3_4"]] <- "Figure 3.4.  Ward-level residuals from the zero-dose model"
 artifacts$fig_3_4_path <- save_fig(fig_3_4, "fig_3_4", width = 8.6, height = 6.0)
 
+########################################
+# Figure 3.4b — Ward residual map      #
+# (NEW, 19/7/2026 -- ported from        #
+# fig_ward_residual_map_prototype.R)    #
+########################################
+# Geographic companion to Figure 3.4's ranked list: IV.C's argument is that
+# Katsina's largest residuals should cluster in its least reliable LGAs
+# while Kano's look flat everywhere, a pattern a ranked list can state but
+# not show. Deliberately NOT a targeting map (same caution as III.A.ii/
+# IV.C): a large residual is a candidate for field verification, not a
+# confirmed allocation priority.
+
+resid_classified_path <- file.path(resid_dir, "04_ward_residuals_classified.rds")
+if (map_boundaries_loaded && require_file(resid_classified_path, "Figure 3.4b ward residual map")) {
+  set.seed(2026)
+  data_ward_resid_34b <- readRDS(resid_classified_path) %>%
+    filter(!is.na(lga_name), !is.na(facility_ward)) %>%
+    # n_ward is n_children (the real exported column). zd_count/non_zd_count
+    # are transient columns computed only inside 04_ward_residuals.R's own
+    # Plot D pipeline and are NOT saved to this file.
+    mutate(lga_clean = strip_lga_suffix(lga_name), n_ward = n_children) %>%
+    rowwise() %>%
+    mutate(lga_matched = match_lga_name(lga_clean, state, kk_lgas)) %>%
+    ungroup()
+  
+  ward_pts_34b <- data_ward_resid_34b %>%
+    rowwise() %>%
+    mutate(geometry = list(sample_point_in_lga(state, lga_matched))) %>%
+    ungroup()
+  
+  resid_sf_34b <- st_as_sf(
+    ward_pts_34b %>% select(state, lga_name, facility_ward, residual, resid_tier, n_ward, lga_matched),
+    geometry = do.call(c, ward_pts_34b$geometry), crs = st_crs(kk_lgas)
+  ) %>% filter(!is.na(st_coordinates(.)[, 1]))
+  
+  if (nrow(resid_sf_34b) == 0) {
+    warning("Figure 3.4b: no wards could be placed after LGA matching -- check the fuzzy-match log above.", call. = FALSE)
+    fig_3_4b <- placeholder_plot("NO WARDS MATCHED\nsee console log for LGA name-matching issues")
+  } else {
+    top_resid_lgas_34b <- resid_sf_34b %>% st_drop_geometry() %>%
+      group_by(state, lga_matched) %>%
+      summarise(mean_resid = mean(residual, na.rm = TRUE), n_wards = n(), .groups = "drop") %>%
+      filter(n_wards >= 2) %>% slice_max(mean_resid, n = 3)
+    
+    labels_34b <- kk_lgas %>% filter(NAME_2 %in% top_resid_lgas_34b$lga_matched) %>% st_centroid() %>%
+      left_join(top_resid_lgas_34b, by = c("NAME_1" = "state", "NAME_2" = "lga_matched")) %>%
+      filter(!is.na(mean_resid)) %>%
+      mutate(label = paste0(NAME_2, " (+", round(mean_resid, 1), "pp)"))
+    
+    extent_34b <- bbox_with_buffer(kk_states, 0.06)
+    resid_range_34b <- max(abs(resid_sf_34b$residual), na.rm = TRUE)
+    
+    fig_3_4b <- ggplot() +
+      geom_sf(data = bounds_geo$adm1, fill = "#F2F2F2", colour = "white", linewidth = 0.15) +
+      geom_sf(data = kk_states, fill = "#FAFAF7", colour = "#10243B", linewidth = 0.5) +
+      geom_sf(data = kk_lgas, fill = NA, colour = "#9AA7B4", linewidth = 0.2) +
+      geom_sf(data = resid_sf_34b, aes(size = n_ward, colour = residual), alpha = 0.8) +
+      geom_lga_labels(labels_34b, "label") +
+      # Binned diverging scale, not a continuous gradient -- otherwise
+      # anything short of the most extreme residuals reads as the same
+      # washed-out pale grey (a ward at +2pp and one at +8pp become nearly
+      # indistinguishable). Steps keep every band visibly separated.
+      scale_colour_steps2(low = "#1D6FA4", mid = "#EFEFE5", high = "#C0312D", midpoint = 0,
+                          limits = c(-resid_range_34b, resid_range_34b),
+                          breaks = scales::breaks_pretty(n = 6)(c(-resid_range_34b, resid_range_34b)),
+                          name = "Residual (observed\nminus predicted ZD, pp)",
+                          guide = steps_guide(barwidth = 6.5)) +
+      scale_size_continuous(name = "Children in\nward (N)", range = c(1.5, 11), labels = comma) +
+      coord_sf(xlim = extent_34b$xlim, ylim = extent_34b$ylim, expand = FALSE, clip = "off") +
+      labs(caption = paste0(
+        "Each point is one ward (04_ward_residuals_classified.rds), randomly placed within its correct LGA -- not a\n",
+        "true coordinate. Red = higher observed zero-dose rate than the model predicts; blue = lower. Labelled LGAs\n",
+        "are the top 3 by mean residual. As discussed in IV.C, a large residual here is a candidate for field\n",
+        "verification, not a confirmed allocation priority. Administrative boundaries: GADM v4.1 (gadm.org).")) +
+      theme_map_diss(12)
+  }
+} else {
+  fig_3_4b <- placeholder_plot("MISSING INPUT\n04_ward_residuals_classified.rds, or GADM boundaries unavailable")
+}
+
+fig_titles[["fig_3_4b"]] <- "Figure 3.4b.  Ward-level zero-dose model residuals, mapped"
+artifacts$fig_3_4b_path <- save_fig(fig_3_4b, "fig_3_4b", width = 9.5, height = 8.4, dpi = 150)
+
 #----------------------------------------------------------------------------
 
 ########################################
@@ -938,6 +1234,88 @@ if (require_file(mb_path, "Figure 3.7 strict vs permissive recovery")) {
 
 fig_titles[["fig_3_7"]] <- "Figure 3.7.  Strict versus permissive recovery rate by state"
 artifacts$fig_3_7_path <- save_fig(fig_3_7, "fig_3_7", width = 8, height = 4.2)
+
+########################################
+# Figure 3.7b — Off-network share map  #
+# (NEW, 19/7/2026 -- ported from        #
+# fig_offnetwork_ward_map_prototype.R)  #
+########################################
+# Geographic companion to Figure 3.7's strict-vs-permissive gap: answers
+# Lucy's comment (c252) on whether the Kano/Katsina difference in
+# off-network reporting is a uniform state-level pattern or concentrated
+# in particular LGAs.
+
+dt_clean_path_37b <- file.path(mch_dir, "01_defaultertracing_clean.rds")
+if (map_boundaries_loaded && require_file(dt_clean_path_37b, "Figure 3.7b off-network map")) {
+  set.seed(2026)
+  ward_offnet_37b <- readRDS(dt_clean_path_37b) %>%
+    filter(!is.na(lga_name), !is.na(facility_ward)) %>%
+    group_by(state, lga_name, facility_ward) %>%
+    summarise(
+      n_recovered  = sum(tracing_outcome %in% c("yes_ok", "yes_off_network_care"), na.rm = TRUE),
+      n_offnetwork = sum(tracing_outcome == "yes_off_network_care", na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    filter(n_recovered >= 5) %>%
+    mutate(offnet_share = round(100 * n_offnetwork / n_recovered, 1),
+           lga_clean = strip_lga_suffix(lga_name)) %>%
+    rowwise() %>%
+    mutate(lga_matched = match_lga_name(lga_clean, state, kk_lgas)) %>%
+    ungroup()
+  
+  ward_pts_37b <- ward_offnet_37b %>%
+    rowwise() %>%
+    mutate(geometry = list(sample_point_in_lga(state, lga_matched))) %>%
+    ungroup()
+  
+  ward_offnet_37b_sf <- st_as_sf(
+    ward_pts_37b %>% select(state, lga_name, facility_ward, n_recovered, n_offnetwork, offnet_share, lga_matched),
+    geometry = do.call(c, ward_pts_37b$geometry), crs = st_crs(kk_lgas)
+  ) %>% filter(!is.na(st_coordinates(.)[, 1]))
+  
+  if (nrow(ward_offnet_37b_sf) == 0) {
+    warning("Figure 3.7b: no wards could be placed after LGA matching -- check the fuzzy-match log above.", call. = FALSE)
+    fig_3_7b <- placeholder_plot("NO WARDS MATCHED\nsee console log for LGA name-matching issues")
+  } else {
+    top_offnet_37b <- ward_offnet_37b_sf %>% st_drop_geometry() %>%
+      group_by(state, lga_matched) %>%
+      summarise(n_recovered = sum(n_recovered), n_offnetwork = sum(n_offnetwork), .groups = "drop") %>%
+      filter(n_recovered >= 20) %>%
+      mutate(share = round(100 * n_offnetwork / n_recovered, 1)) %>%
+      slice_max(share, n = 3)
+    
+    labels_37b <- kk_lgas %>% filter(NAME_2 %in% top_offnet_37b$lga_matched) %>% st_centroid() %>%
+      left_join(top_offnet_37b, by = c("NAME_1" = "state", "NAME_2" = "lga_matched")) %>%
+      filter(!is.na(share)) %>%
+      mutate(label = paste0(NAME_2, " (", share, "%)"))
+    
+    extent_37b <- bbox_with_buffer(kk_states, 0.06)
+    
+    fig_3_7b <- ggplot() +
+      geom_sf(data = bounds_geo$adm1, fill = "#F2F2F2", colour = "white", linewidth = 0.15) +
+      geom_sf(data = kk_states, fill = "#FAFAF7", colour = "#10243B", linewidth = 0.5) +
+      geom_sf(data = kk_lgas, fill = NA, colour = "#9AA7B4", linewidth = 0.2) +
+      geom_sf(data = ward_offnet_37b_sf, aes(size = n_recovered, colour = offnet_share), alpha = 0.75) +
+      geom_lga_labels(labels_37b, "label") +
+      scale_colour_steps(low = "#1D9E75", high = "#C0312D", name = "Off-network share\nof recovery (%)",
+                         breaks = scales::breaks_pretty(n = 5), labels = label_number(suffix = "%"),
+                         guide = steps_guide()) +
+      scale_size_continuous(name = "Recovered cases\n(N, ward)", range = c(1.5, 11), labels = comma) +
+      coord_sf(xlim = extent_37b$xlim, ylim = extent_37b$ylim, expand = FALSE, clip = "off") +
+      labs(caption = paste0(
+        "Each point is one ward with at least 5 recovered cases (01_defaultertracing_clean.rds), randomly placed\n",
+        "within its correct LGA -- not a true coordinate. Colour is the share of recovered cases confirmed only by\n",
+        "unverified off-network report rather than a confirmed in-network vaccination (II.A / III.B.ii). Labelled\n",
+        "LGAs are the top 3 by this share, among LGAs with at least 20 recovered cases. Administrative boundaries:\n",
+        "GADM v4.1 (gadm.org).")) +
+      theme_map_diss(12)
+  }
+} else {
+  fig_3_7b <- placeholder_plot("MISSING INPUT\n01_defaultertracing_clean.rds, or GADM boundaries unavailable")
+}
+
+fig_titles[["fig_3_7b"]] <- "Figure 3.7b.  Off-network share of recovered defaulters, by ward"
+artifacts$fig_3_7b_path <- save_fig(fig_3_7b, "fig_3_7b", width = 9.5, height = 8.2, dpi = 150)
 
 ########################################
 # Figure 3.8 — Daily visit diagnostics #
@@ -1240,6 +1618,136 @@ fig_weather_robustness <- ggplot(rob_coef_rows, aes(x = coef, y = spec, colour =
 
 fig_titles[["fig_weather_robustness"]] <- "Figure 3.9.  Weather effect estimates across specifications — offset, NB-offset and spline robustness"
 artifacts$fig_weather_robustness_path <- save_fig(fig_weather_robustness, "fig_weather_robustness", width = 10, height = 5.2)
+
+########################################
+# Figure 3.9b — Weather variable maps  #
+# (NEW, 19/7/2026 -- ported from        #
+# fig_weather_maps_prototype.R)         #
+########################################
+# Spatial companion to Figure 3.9's robustness coefficients: gives the
+# null weather result a physical reference (what the landscape looks
+# like, not just point estimates). Panel B (heat) is Kano-only by
+# construction, not a display choice -- that IS the full extent of the
+# ERA5/UTCI panel used in the heat model (06_era5_analysis.R filters to
+# Ungogo/Gabasawa before anything else); showing that sparseness plainly
+# is more honest than padding the map with LGAs the heat model never used.
+
+attach_lga_polygons_map <- function(df, state_col, lga_col) {
+  df <- df %>%
+    mutate(state_ = .data[[state_col]], lga_raw_ = .data[[lga_col]]) %>%
+    filter(!is.na(state_), !is.na(lga_raw_), lga_raw_ != "") %>%
+    mutate(lga_clean_ = strip_lga_suffix(lga_raw_))
+  lgas_in_scope <- bounds_geo$adm2 %>% filter(NAME_1 %in% unique(df$state_))
+  df <- df %>% rowwise() %>%
+    mutate(lga_matched_ = match_lga_name(lga_clean_, state_, lgas_in_scope)) %>%
+    ungroup() %>%
+    filter(!is.na(lga_matched_))
+  lgas_in_scope %>% inner_join(df, by = c("NAME_1" = "state_", "NAME_2" = "lga_matched_"))
+}
+
+# NOTE on paths: 02_chirps_data_kk_monthly.rds and 07_ndvi_monthly.rds are
+# written by 02_chirps_import_analysis.R / 08_ndvi_analysis.R to their OWN
+# import_dir (03_output/02_chirps_data, 03_output/07_ndvi respectively) --
+# NOT chirps_dir/ndvi_dir as defined at the top of this script, which point
+# at those scripts' separate regression-output directories
+# (03_output/02_chirps_analysis, 03_output/08_ndvi_analysis) used for the
+# weather regression .txt tables above. Set explicitly here to avoid
+# reusing a variable that resolves to the wrong folder.
+precip_path_39b <- file.path(home, "03_output/02_chirps_data/02_chirps_data_kk_monthly.rds")
+heat_path_39b   <- file.path(era_dir, "06_panel_daily.rds")
+ndvi_path_39b   <- file.path(home, "03_output/07_ndvi/07_ndvi_monthly.rds")
+
+weather_maps_ok <- map_boundaries_loaded &&
+  require_file(precip_path_39b, "Figure 3.9b rainfall map") &&
+  require_file(heat_path_39b, "Figure 3.9b heat map") &&
+  require_file(ndvi_path_39b, "Figure 3.9b NDVI map")
+
+if (weather_maps_ok) {
+  precip_lga_39b <- readRDS(precip_path_39b) %>%
+    group_by(state, lga_name_mchtrack) %>%
+    summarise(precip_mm = mean(precip_actual_mm, na.rm = TRUE), .groups = "drop")
+  precip_sf_39b <- attach_lga_polygons_map(precip_lga_39b, "state", "lga_name_mchtrack")
+  
+  heat_lga_39b <- readRDS(heat_path_39b) %>%
+    mutate(state = "Kano") %>%
+    group_by(state, lga_clean) %>%
+    summarise(utci = mean(utci_daytime_mean, na.rm = TRUE), .groups = "drop")
+  heat_sf_39b <- attach_lga_polygons_map(heat_lga_39b, "state", "lga_clean")
+  
+  ndvi_lga_39b <- readRDS(ndvi_path_39b) %>%
+    group_by(state, lga_name) %>%
+    summarise(vim = mean(vim_monthly, na.rm = TRUE), .groups = "drop")
+  ndvi_sf_39b <- attach_lga_polygons_map(ndvi_lga_39b, "state", "lga_name")
+  
+  if (nrow(precip_sf_39b) == 0 || nrow(heat_sf_39b) == 0 || nrow(ndvi_sf_39b) == 0) {
+    warning("Figure 3.9b: at least one weather panel had zero LGAs matched -- check the fuzzy-match log above.", call. = FALSE)
+    fig_weather_maps <- placeholder_plot("NO LGAs MATCHED for at least one weather panel\nsee console log")
+  } else {
+    precip_extent_39b <- bbox_with_buffer(precip_sf_39b, 0.08)
+    precip_labels_39b <- precip_sf_39b %>% st_centroid() %>% slice_max(precip_mm, n = 2) %>%
+      mutate(label = paste0(NAME_2, " (", round(precip_mm), " mm)"))
+    
+    p_precip_39b <- ggplot() +
+      geom_sf(data = bounds_geo$adm1 %>% filter(NAME_1 %in% unique(precip_sf_39b$NAME_1)),
+              fill = "#F7F7F7", colour = "white", linewidth = 0.15) +
+      geom_sf(data = precip_sf_39b, aes(fill = precip_mm), colour = "white", linewidth = 0.25) +
+      geom_lga_labels(precip_labels_39b, "label") +
+      scale_fill_steps(low = "#F5EFE0", high = "#1D6FA4", name = "Mean monthly\nrainfall (mm)",
+                       breaks = scales::breaks_pretty(n = 5), labels = comma, guide = steps_guide()) +
+      coord_sf(xlim = precip_extent_39b$xlim, ylim = precip_extent_39b$ylim, expand = FALSE, clip = "off") +
+      labs(subtitle = "A. Rainfall (CHIRPS)") +
+      theme_map_diss(11) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 12))
+    
+    heat_extent_39b <- bbox_with_buffer(bounds_geo$adm2 %>% filter(NAME_1 == "Kano"), 0.05)
+    heat_labels_39b <- heat_sf_39b %>% st_centroid() %>%
+      mutate(label = paste0(NAME_2, " (", round(utci, 1), "°C)"))
+    
+    p_heat_39b <- ggplot() +
+      geom_sf(data = bounds_geo$adm2 %>% filter(NAME_1 == "Kano"), fill = "#F7F7F7", colour = "white", linewidth = 0.15) +
+      geom_sf(data = heat_sf_39b, aes(fill = utci), colour = "white", linewidth = 0.25) +
+      geom_lga_labels(heat_labels_39b, "label") +
+      # FIX: legend numbers were previously smushed together on this panel --
+      # binned scale (one label per discrete box) + accuracy=0.1 breaks +
+      # a wider guide bar (steps_guide()) instead of a continuous colourbar.
+      scale_fill_steps(low = "#FCE9C9", high = "#C0312D", name = "Mean daytime\nUTCI (°C)",
+                       breaks = scales::breaks_pretty(n = 4), labels = label_number(accuracy = 0.1),
+                       guide = steps_guide()) +
+      coord_sf(xlim = heat_extent_39b$xlim, ylim = heat_extent_39b$ylim, expand = FALSE, clip = "off") +
+      labs(subtitle = "B. Heat (ERA5/UTCI) -- Kano only, 2 LGAs") +
+      theme_map_diss(11) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 12))
+    
+    ndvi_extent_39b <- bbox_with_buffer(ndvi_sf_39b, 0.08)
+    ndvi_labels_39b <- ndvi_sf_39b %>% st_centroid() %>% slice_max(vim, n = 2) %>%
+      mutate(label = paste0(NAME_2, " (", round(vim, 3), ")"))
+    
+    p_ndvi_39b <- ggplot() +
+      geom_sf(data = bounds_geo$adm1 %>% filter(NAME_1 %in% unique(ndvi_sf_39b$NAME_1)),
+              fill = "#F7F7F7", colour = "white", linewidth = 0.15) +
+      geom_sf(data = ndvi_sf_39b, aes(fill = vim), colour = "white", linewidth = 0.25) +
+      geom_lga_labels(ndvi_labels_39b, "label") +
+      # Same legend fix as the heat panel -- VIM values are small decimals
+      # that previously crowded together under a continuous colourbar.
+      scale_fill_steps(low = "#F1E9D2", high = "#2E7D32", name = "Mean vegetation\nindex (VIM)",
+                       breaks = scales::breaks_pretty(n = 4), labels = label_number(accuracy = 0.01),
+                       guide = steps_guide()) +
+      coord_sf(xlim = ndvi_extent_39b$xlim, ylim = ndvi_extent_39b$ylim, expand = FALSE, clip = "off") +
+      labs(subtitle = "C. Vegetation greenness (NDVI)") +
+      theme_map_diss(11) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 12))
+    
+    fig_weather_maps <- (p_precip_39b | p_heat_39b | p_ndvi_39b) +
+      plot_annotation(
+        caption = paste0(
+          "Each map averages the underlying weather variable across its full study window per LGA actually present in\n",
+          "that variable's data (panel B is Kano-only by construction -- see note above). Physical reference for the null\n",
+          "result in III.C/IV.B. Administrative boundaries: GADM v4.1 (gadm.org)."),
+        theme = theme(plot.caption = element_text(family = "serif", size = 8, colour = "#888", hjust = 0, margin = margin(t = 10))))
+  }
+} else {
+  fig_weather_maps <- placeholder_plot("MISSING INPUT\nsee Figure 3.9b requirements, or GADM boundaries unavailable")
+}
+
+fig_titles[["fig_weather_maps"]] <- "Figure 3.9b.  Weather variables across Kano and Katsina's LGAs"
+artifacts$fig_weather_maps_path <- save_fig(fig_weather_maps, "fig_weather_maps", width = 15, height = 7, dpi = 150)
 
 #----------------------------------------------------------------------------
 
@@ -1748,5 +2256,22 @@ cat("10. Two new figures this pass: fig_weather_robustness (coefficient\n")
 cat("    plot companion to tab_weather_robustness) and fig_2_2b (data\n")
 cat("    reliability by state, motivating RQ3's Kano-only scope). Neither\n")
 cat("    is wired into 11_dissertation_draft.Rmd yet, same as fig_3_2b.\n")
+cat("11. FOUR new geospatial figures (19/7/2026): fig_1_1 (footprint map,\n")
+cat("    fills the Figure 1.1 placeholder), fig_3_4b (ward residual map,\n")
+cat("    companion to fig_3_4), fig_3_7b (off-network share map, companion\n")
+cat("    to fig_3_7), fig_weather_maps (rainfall/heat/NDVI choropleths,\n")
+cat("    companion to fig_weather_robustness / Figure 3.9). Ported from the\n")
+cat("    standalone fig_*_map_prototype.R scripts after sign-off there —\n")
+cat("    same LGA name-matching, point-sampling and binned-legend logic,\n")
+cat("    now sourced from the real 01/02/04/06/07_*.rds files instead of a\n")
+cat("    proof-of-concept run. Boundary data is GADM v4.1 (gadm.org),\n")
+cat("    fetched over the network on first run and cached to\n")
+cat("    02_data/03_geodata thereafter — if that fetch fails (no network),\n")
+cat("    all four fall back to a placeholder rather than halting the whole\n")
+cat("    script (see map_boundaries_loaded near the top). None of the four\n")
+cat("    is wired into 11_dissertation_body.Rmd yet, same as fig_3_2b/\n")
+cat("    fig_weather_robustness/fig_2_2b above -- update 11_dissertation_\n")
+cat("    body.Rmd's Figure 1.1 placeholder (and add new show_fig() calls\n")
+cat("    for the other three) once you're happy with these.\n")
 
 #--------------------------(END)------------------------------#

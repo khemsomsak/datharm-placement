@@ -184,6 +184,25 @@ render_simple_table <- function(df, header_color_html = "#10243B", widths_em = N
   }
 }
 
+#--- Manual page break before each new chapter -------------------------------
+# Word paginates by content flow with no concept of "start a new chapter on
+# its own page" unless told to explicitly. A raw OOXML page-break block only
+# means anything in docx output -- it is silently dropped by pandoc when
+# rendering to any other format, so this only ever emits something for Word.
+# HTML instead gets a CSS page-break-before rule on h1 (11_dissertation_html.Rmd),
+# which only takes visible effect when the page is printed or exported to
+# PDF, since HTML has no concept of a "page" on screen.
+# Called from a chunk with results='asis' immediately before each H1 heading
+# EXCEPT the first ("I. Background..."), which already starts on its own
+# page via the explicit break 11_dissertation_word.Rmd inserts right after
+# the declaration section -- adding a second break there would produce an
+# empty page between the declaration and Chapter I.
+page_break <- function() {
+  if (is_word_output()) {
+    cat('\n\n```{=openxml}\n<w:p><w:r><w:br w:type="page"/></w:r></w:p>\n```\n\n')
+  }
+}
+
 #--- Shrink figure height slightly for Word ----------------------------------
 # Word paginates less generously than a browser does, and a figure sized for
 # a wide HTML page can be just tall enough to no longer fit the remaining
