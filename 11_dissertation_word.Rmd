@@ -1,0 +1,48 @@
+---
+title: "Zero-Dose Children and Defaulter Recovery in Northern Nigeria: Evidence from the MCHTrack Programme"
+subtitle: "MSc in International Health and Tropical Medicine, Nuffield Department of Medicine, University of Oxford"
+author: "Examination Candidate Number: 1102514"
+date: "`r {mo<-c('January','February','March','April','May','June','July','August','September','October','November','December'); y<-as.integer(format(Sys.Date(),'%Y')); if (y>2100) y<-y-543; sprintf('%d %s %d', as.integer(format(Sys.Date(),'%d')), mo[as.integer(format(Sys.Date(),'%m'))], y)}`"
+output:
+  word_document:
+    toc: false
+    number_sections: false
+    fig_caption: true
+    reference_docx: 11_word_reference.docx
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("11_dissertation_setup.R")
+```
+
+::: {custom-style="TitleInfo"}
+Word count: 12,293 (inclusive of visualisation placeholders and callouts; excludes abstract, references, tables, figures and appendices per exam conventions)
+:::
+
+```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+```
+
+## Candidate's Contribution and Declaration
+
+This dissertation analyses programme data from MCHTrack, a community health worker-based digital immunisation tracking system operated by DATHARM, a Nigerian non-governmental organisation, across Kano and Katsina states in northern Nigeria between August 2024 and March 2026.
+
+The candidate conducted a six-week in-person placement with DATHARM at their offices in Abuja, Nigeria, during which time the primary data were obtained and fieldwork was conducted. All quantitative analysis, including data cleaning, model specification, regression analysis, geospatial and weather data integration, and results interpretation, was designed and performed independently by the candidate using R. The candidate independently reviewed and verified all citations in the final draft. The analytical pipeline is documented across eight R scripts, which are provided as supplementary material alongside a link to the project's GitHub repository.
+
+The candidate undertook two site visits to primary healthcare centres in the wider Abuja area for contextual grounding, and held informal conversations with DATHARM staff, including programme coordinators for Kano and Katsina, which informed the qualitative context presented in the discussion. These conversations were informal and observational in nature; no structured interview protocol was applied and no independent qualitative analysis was conducted.
+
+The following assistance was received during this project. Academic supervision was provided by Dr Prabin Dahal and Dr Aisha Adamu (primary supervisors), Dr Lucy Harrison, and a geospatial methods advisor. Supervisors reviewed a complete first draft of the dissertation and provided written feedback. Raw programme data were provided by DATHARM's data manager, who also responded to clarifying questions regarding specific data anomalies identified during the audit. DATHARM's Chief Executive Officer, Amina Ahmad, is named as a collaborator on this work and provided programme context and review. A research partner, Ahmed Ismail, conducted a parallel and independently written analysis of delivery mode effectiveness using the same MCHTrack dataset; his analysis does not form part of this dissertation.
+
+Statistical advice was obtained from supervisors during the course of normal supervision meetings. No specialist statistical consultancy was engaged.
+
+### Research ethics
+
+This study did not require formal ethics review. The analysis is based entirely on routinely collected, pseudonymised programme data provided by DATHARM. No primary data collection was conducted by the candidate, and there was no direct engagement with the beneficiary population at any stage of the research. The research plan was reviewed as part of the placement proposal process through the MSc IHTM programme prior to the placement commencing, and no concerns requiring formal ethics referral were identified at that stage.
+
+```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+```
+
+```{r child-body, child="11_dissertation_body.Rmd"}
+```

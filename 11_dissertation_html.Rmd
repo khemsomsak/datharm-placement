@@ -1,0 +1,78 @@
+---
+title: "Zero-Dose Children and Defaulter Recovery in Northern Nigeria: Evidence from the MCHTrack Programme"
+author: "Examination Candidate Number: 1102514"
+date: "`r {mo<-c('January','February','March','April','May','June','July','August','September','October','November','December'); y<-as.integer(format(Sys.Date(),'%Y')); if (y>2100) y<-y-543; sprintf('%d %s %d', as.integer(format(Sys.Date(),'%d')), mo[as.integer(format(Sys.Date(),'%m'))], y)}`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: false
+    css: |
+      body { font-family: "Georgia", "Times New Roman", serif; font-size: 12pt; line-height: 1.65; color: #1a1a1a; max-width: 860px; margin: 0 auto; padding: 0 2em; }
+      h1 { font-size: 1.7em; margin-top: 2.6em; border-bottom: 2px solid #10243B; padding-bottom: 0.3em; }
+      h2 { font-size: 1.3em; margin-top: 2em; color: #10243B; }
+      h3 { font-size: 1.08em; margin-top: 1.6em; color: #1D6FA4; }
+      p { text-align: justify; }
+      blockquote { font-size: 0.76em; color: #9a9a9a; line-height: 1.45; margin: 0.3em 0 1.5em 1.2em; font-style: italic; font-weight: 300; border: none; background: none; padding: 0; max-width: 92%; }
+      table { margin: 1.4em auto; font-size: 0.92em; }
+      .frontmatter { margin-bottom: 0; }
+      .titleblock { text-align: center; padding: 3em 0 2.5em 0; }
+      .titleblock h1 { border-bottom: none; margin-top: 0; font-size: 1.9em; }
+      .titleblock .subinfo { font-size: 1.05em; color: #444; margin-top: 1.2em; line-height: 1.9; }
+      .page-gap { height: 5em; border-bottom: 1px dashed #ccc; margin-bottom: 3em; }
+      .declaration-block { padding: 0 1em; }
+      .declaration-block h2 { margin-top: 0; }
+      .missing-artifact { border: 1px solid #d9534f; background: #fdf2f2; color: #a94442; padding: 0.6em 1em; border-radius: 4px; font-size: 0.9em; }
+      .wordcount { text-align: center; color: #777; font-size: 0.9em; margin-top: 1em; }
+      #header { display: none; }
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("11_dissertation_setup.R")
+```
+
+<div class="frontmatter">
+
+<div class="titleblock">
+
+<div class="subinfo">
+MSc in International Health and Tropical Medicine<br>
+Nuffield Department of Medicine, University of Oxford<br>
+</div>
+
+<div class="wordcount">
+Word count: 10,293 (inclusive of visualisation placeholders and callouts; excludes abstract, references, tables, figures and appendices per exam conventions)
+</div>
+
+</div>
+
+<div class="page-gap"></div>
+
+<div class="declaration-block">
+
+## Candidate's Contribution and Declaration
+
+This dissertation analyses programme data from MCHTrack, a community health worker-based digital immunisation tracking system operated by DATHARM, a Nigerian non-governmental organisation, across Kano and Katsina states in northern Nigeria between August 2024 and March 2026.
+
+The candidate conducted a six-week in-person placement with DATHARM at their offices in Abuja, Nigeria, during which time the primary data were obtained and fieldwork was conducted. All quantitative analysis, including data cleaning, model specification, regression analysis, geospatial and weather data integration, and results interpretation, was designed and performed independently by the candidate using R. The candidate independently reviewed and verified all citations in the final draft. The analytical pipeline is documented across eight R scripts, which are provided as supplementary material alongside a link to the project's GitHub repository.
+
+The candidate undertook two site visits to primary healthcare centres in the wider Abuja area for contextual grounding, and held informal conversations with DATHARM staff, including programme coordinators for Kano and Katsina, which informed the qualitative context presented in the discussion. These conversations were informal and observational in nature; no structured interview protocol was applied and no independent qualitative analysis was conducted.
+
+The following assistance was received during this project. Academic supervision was provided by Dr Prabin Dahal and Dr Aisha Adamu (primary supervisors), Dr Lucy Harrison, and a geospatial methods advisor. Supervisors reviewed a complete first draft of the dissertation and provided written feedback. Raw programme data were provided by DATHARM's data manager, who also responded to clarifying questions regarding specific data anomalies identified during the audit. DATHARM's Chief Executive Officer, Amina Ahmad, is named as a collaborator on this work and provided programme context and review. A research partner, Ahmed Ismail, conducted a parallel and independently written analysis of delivery mode effectiveness using the same MCHTrack dataset; his analysis does not form part of this dissertation.
+
+Statistical advice was obtained from supervisors during the course of normal supervision meetings. No specialist statistical consultancy was engaged.
+
+### Research ethics
+
+This study did not require formal ethics review. The analysis is based entirely on routinely collected, pseudonymised programme data provided by DATHARM. No primary data collection was conducted by the candidate, and there was no direct engagement with the beneficiary population at any stage of the research. The research plan was reviewed as part of the placement proposal process through the MSc IHTM programme prior to the placement commencing, and no concerns requiring formal ethics referral were identified at that stage.
+
+</div>
+
+<div class="page-gap"></div>
+
+</div>
+
+```{r child-body, child="11_dissertation_body.Rmd"}
+```

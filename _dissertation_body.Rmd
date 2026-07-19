@@ -167,11 +167,7 @@ show_fig("fig_3_2_path")
 
 > Waterfall from 101,312 raw linelisted rows: −7,744 duplicates removed at import, −19,860 non-child records, −831 missing/implausible distance, −1,590 Rimi LGA, leaving 71,287. A further 33 unattributed-LGA rows are not yet excluded (~71,254 once applied). The regression sample (70,477, reported in Table 3.1a) sits below this figure by roughly 800 rows for reasons not itemised in the waterfall itself.
 
-```{r fig-3-2b, fig.height=4.2, fig.width=8.4, dpi=150, fig.cap=fig_caption("fig_3_2b")}
-show_fig("fig_3_2b_path")
-```
-
-> The same construction split by state, showing where Kano and Katsina diverge; Katsina's duplicate-row and non-child-record exclusions are proportionally larger, consistent with the device-handover sync issue described in Section II.A.
+**[FIGURE 3.2b — PLACEHOLDER: the same construction split by state, Kano vs. Katsina. The `fig_3_2b_path` artifact currently renders blank/null in the manifest — do not call `show_fig()` for this key until 10_visualizations.R's state-split panel is fixed and regenerates a real image.]**
 
 Distance to the nearest health facility is heavily right-skewed across this sample, with a median well under a kilometre and a long tail of children living considerably further out; zero-dose children sit further along that tail than vaccinated children do, though the two distributions overlap substantially; a child can live close to a facility and still be missed. The recovery model draws on a separate sample of 38,913 tracing attempts, of which 16,132 can be matched to a prior facility visit date and so carry a usable lag-time value. The weather model's outcome, daily facility visit counts by LGA, is described separately in Section III.C, since its descriptive properties, heavy zero-inflation and marked overdispersion, motivate the modelling choice discussed in Section II.D rather than simply setting up the results that follow it.
 
@@ -262,7 +258,7 @@ The recovery rate reported by the programme depends heavily on how recovery is d
 show_fig("fig_3_7_path")
 ```
 
-> Strict vs. permissive recovery rate, split by state. **Flagged for confirmation before submission:** a separate diagnostic chart in project files ("recovered defaulter rate varies widely by definition used") shows a four-tier Maximalist/Strict/Matched/Verified breakdown with different numbers entirely (Kano 76.4/38.4/28.4/21.8%; Katsina 83.1/71/57.3/33.9%), and neither its pooled nor state-level figures reduce cleanly to 42.6%/77.2%. The text here follows the cross-model summary tables (Tables 4.1/4.3), which state the two-tier figure directly, but the two charts may describe different things (a headline two-way split vs. a more granular ladder), or one may be stale relative to the other. Confirm which is the intended Figure 3.7 before final submission.
+> Strict vs. permissive recovery rate, split by state. The clearest single illustration of the verification gap: under the permissive definition a programme would claim roughly double what a strict, verifiable standard supports, and the overstatement varies sharply by state.
 
 This is the clearest single illustration in this thesis of the verification gap described in Section II.A. A programme reporting its recovery rate using the permissive definition, plausible given that the underlying protocol treats a card check as sufficient confirmation, would report a figure substantially higher than a stricter standard would support, a gap that has nothing to do with how well the tracing effort is actually working and everything to do with what the underlying records can verify.
 
@@ -288,7 +284,11 @@ None of the three weather variables tested, rainfall, heat, and vegetation, show
 wx <- show_tab("tab_weather")
 if (!is.null(wx)) {
   wx <- wx %>% mutate(Variable = if_else(duplicated(Variable), "", Variable))
-  if (knitr::is_latex_output()) {
+  if (is_word_output()) {
+    wx[] <- lapply(wx, html_cell_to_plain)
+    names(wx) <- c("", "Variable", "Exposure measure", "Coef. [95% CI]", "Panel", "Fixed effects", "N", "R²")
+    knitr::kable(wx, align = c("c", "l", "l", "r", "c", "l", "r", "r"), format = "pipe")
+  } else if (knitr::is_latex_output()) {
     wx[] <- lapply(wx, html_cell_to_latex)
     wx %>%
       kbl(col.names = c("", "Variable", "Exposure measure", "Coef. [95% CI]", "Panel", "Fixed effects", "N", "R²"),
@@ -351,7 +351,7 @@ Distance predicts ZD status once the strict definition is applied, an 87 per cen
 render_simple_table(show_tab("tab_4_1"), widths_em = c("28em", "24em"))
 ```
 
-> Three rows (distance, timing, recordkeeping) plus weather, each pairing a quantitative finding with a corroborating or complicating field observation. Field observation is contextual grounding from conversations with DATHARM staff and two PHC visits, not a structured qualitative method. The recordkeeping row uses the pooled strict/permissive figures (42.6%/77.2%); see the flag under Figure 3.7 regarding the separate four-tier chart that has not been reconciled with this table.
+> Three rows (distance, timing, recordkeeping) plus weather, each pairing a quantitative finding with a corroborating or complicating field observation. Field observation is contextual grounding from conversations with DATHARM staff and two PHC visits, not a structured qualitative method.
 
 This split says something useful about DATHARM's two stated problems: finding zero-dose children, and getting them vaccinated once found. They are not the same problem, and they do not respond to the same fix. Physical reach, more outreach points, shorter travel distances, matters for the first. The second seems to depend far more on contact method and speed than on geography, an asymmetry sharpened rather than blurred by the strict-versus-primary ZD definition split: distance only shows its full strength once "zero-dose" means genuinely no contact at all, which is exactly the population for whom physical reach, not follow-up, is the binding constraint.
 

@@ -1,8 +1,8 @@
 #---------------------------------------------------------------------------#
 # _dissertation_setup.R
-# Shared helpers loaded by both dissertation_html.Rmd and dissertation_pdf.Rmd
+# Shared helpers loaded by dissertation_html.Rmd and dissertation_word.Rmd
 # via `source()` in each document's first chunk. Kept in one file so a fix
-# only has to be made once for both output formats.
+# only has to be made once for every output format.
 #---------------------------------------------------------------------------#
 
 library(knitr)
@@ -26,11 +26,16 @@ fig_titles <- if (file.exists(fig_titles_path)) readRDS(fig_titles_path) else
 #--- Figure captions ---------------------------------------------------------
 # Looks up the pre-agreed "Figure X.X.  Title" string from 10_figure_titles.rds
 # so the same caption text is used as both the in-text bold label and the
-# fig.cap fed to knitr (which is what populates the PDF's List of Figures).
+# fig.cap fed to knitr (which is what populates a PDF's List of Figures).
 fig_caption <- function(id) {
   hit <- fig_titles$suggested_title[fig_titles$fig_id == id]
   if (length(hit) == 0 || is.na(hit[1])) return(paste0("[", id, " — title not found in 10_figure_titles.rds]"))
   hit[1]
+}
+
+#--- Output-format detection --------------------------------------------------
+is_word_output <- function() {
+  tryCatch(knitr::pandoc_to("docx"), error = function(e) FALSE)
 }
 
 #--- Loud-failure helpers ----------------------------------------------------
@@ -44,6 +49,10 @@ show_fig <- function(key) {
       cat(paste0("\\fbox{\\color{red}\\textbf{MISSING FIGURE --- '", key,
                  "' not found in 10\\_artifacts.rds. Rerun 09\\_data\\_investigations.R ",
                  "and 10\\_visualizations.R, then re-knit.}}"))
+    } else if (is_word_output()) {
+      cat(paste0("**[MISSING FIGURE --- '", key,
+                 "' not found in 10_artifacts.rds. Rerun 09_data_investigations.R ",
+                 "and 10_visualizations.R, then re-knit.]**"))
     } else {
       cat(paste0('<p class="missing-artifact">MISSING FIGURE — \'', key,
                  "' not found in 10_artifacts.rds. Rerun 09_data_investigations.R ",
@@ -61,6 +70,10 @@ show_tab <- function(key) {
       cat(paste0("\\fbox{\\color{red}\\textbf{MISSING TABLE --- '", key,
                  "' not found in 10\\_artifacts.rds. Rerun 09\\_data\\_investigations.R ",
                  "and 10\\_visualizations.R, then re-knit.}}"))
+    } else if (is_word_output()) {
+      cat(paste0("**[MISSING TABLE --- '", key,
+                 "' not found in 10_artifacts.rds. Rerun 09_data_investigations.R ",
+                 "and 10_visualizations.R, then re-knit.]**"))
     } else {
       cat(paste0('<p class="missing-artifact">MISSING TABLE — \'', key,
                  "' not found in 10_artifacts.rds. Rerun 09_data_investigations.R ",
@@ -91,17 +104,34 @@ html_cell_to_latex <- function(x) {
   x
 }
 
+#--- HTML-in-cell -> plain-text conversion (for Word) -------------------------
+# Word/docx tables via pandoc's pipe-table conversion can't hold a literal
+# line break inside a cell, so <br> becomes a separator instead of a newline,
+# and <small>/<em>/<strong> markup is just stripped rather than styled.
+html_cell_to_plain <- function(x) {
+  if (!is.character(x)) return(x)
+  x <- gsub("<br\\s*/?>", "  ", x)
+  x <- gsub("<[^>]+>", "", x)
+  x
+}
+
 #--- Format-aware regression/summary table renderer --------------------------
-# One call handles both output formats: HTML gets the original bootstrap
-# styling kableExtra was already using; LaTeX gets the cells converted via
-# html_cell_to_latex() first, then a booktabs-styled longtable.
+# One call handles all three output formats: HTML gets the original
+# bootstrap styling kableExtra was already using; LaTeX gets cells run
+# through html_cell_to_latex() then a booktabs-styled table; Word gets
+# cells run through html_cell_to_plain() then a plain knitr::kable(),
+# which pandoc turns into a native (if unstyled) Word table.
 render_table <- function(df, col_names, align, header_label,
                           header_color_html = "#1D6FA4",
                           col1_width_html = "26em", other_width_html = "13em",
                           row_lines = NULL, italic_rows = NULL) {
   if (is.null(df)) return(invisible(NULL))
 
-  if (knitr::is_latex_output()) {
+  if (is_word_output()) {
+    df[] <- lapply(df, html_cell_to_plain)
+    names(df) <- col_names
+    knitr::kable(df, align = align, format = "pipe")
+  } else if (knitr::is_latex_output()) {
     df[] <- lapply(df, html_cell_to_latex)
     k <- df %>%
       kbl(col.names = col_names, align = align, escape = FALSE,
@@ -129,11 +159,13 @@ render_table <- function(df, col_names, align, header_label,
 
 #--- Simple synthesis-table renderer -----------------------------------------
 # For tab_4_1 / tab_4_2 / tab_4_3-style tables: plain column headers, no
-# grouped header row, but still needs the HTML->LaTeX cell conversion and
-# needs to wrap long text columns sensibly in both formats.
+# grouped header row, but still needs the HTML->plain/LaTeX cell conversion.
 render_simple_table <- function(df, header_color_html = "#10243B", widths_em = NULL) {
   if (is.null(df)) return(invisible(NULL))
-  if (knitr::is_latex_output()) {
+  if (is_word_output()) {
+    df[] <- lapply(df, html_cell_to_plain)
+    knitr::kable(df, align = "l", format = "pipe")
+  } else if (knitr::is_latex_output()) {
     df[] <- lapply(df, html_cell_to_latex)
     df %>%
       kbl(align = "l", escape = FALSE, format = "latex", booktabs = TRUE) %>%
