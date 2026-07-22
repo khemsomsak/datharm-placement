@@ -184,6 +184,22 @@ render_simple_table <- function(df, header_color_html = "#10243B", widths_em = N
   }
 }
 
+#--- Scale every figure to the text column's width in HTML -------------------
+# knitr::include_graphics() does not resize an image unless out.width is
+# set -- without it, a figure displays at its native pixel size (fig.width
+# x dpi), so chunks with a larger fig.width (the new map figures: 9.5in or
+# 15in, vs ~7.5-9in for most existing figures) end up a visibly different
+# size on the page even though every chunk already shares the same dpi=150.
+# Setting out.width="100%" once here makes every HTML figure fill the same
+# proportion of the text column regardless of its saved fig.width, rather
+# than requiring out.width on each individual chunk. Word is deliberately
+# left alone -- percentage out.width is unreliable in docx output, and
+# Word's own figure sizing is already handled by the fig.height shrink
+# hook below.
+if (!is_word_output()) {
+  knitr::opts_chunk$set(out.width = "100%")
+}
+
 #--- Manual page break before each new chapter -------------------------------
 # Word paginates by content flow with no concept of "start a new chapter on
 # its own page" unless told to explicitly. A raw OOXML page-break block only
