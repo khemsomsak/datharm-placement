@@ -47,11 +47,8 @@ source("11_dissertation_setup.R")
 
 <div class="titleblock">
 
-# Zero-Dose Children and Defaulter Recovery in Northern Nigeria: Evidence from the MCHTrack Programme
-
 <div class="subinfo">
-Examination Candidate Number: 1102514<br>
-`r {mo<-c('January','February','March','April','May','June','July','August','September','October','November','December'); y<-as.integer(format(Sys.Date(),'%Y')); if (y>2100) y<-y-543; sprintf('%d %s %d', as.integer(format(Sys.Date(),'%d')), mo[as.integer(format(Sys.Date(),'%m'))], y)}`<br>
+
 MSc in International Health and Tropical Medicine<br>
 Nuffield Department of Medicine, University of Oxford
 </div>
