@@ -137,11 +137,11 @@ html_cell_to_plain <- function(x) {
 # pandoc applies to every pipe table it writes to docx. No LaTeX branch:
 # the PDF output was replaced by Word per the candidate's own workflow.
 render_table <- function(df, col_names, align, header_label,
-                          header_color_html = "#1D6FA4",
-                          col1_width_html = "26em", other_width_html = "13em",
-                          row_lines = NULL, italic_rows = NULL) {
+                         header_color_html = "#1D6FA4",
+                         col1_width_html = "26em", other_width_html = "13em",
+                         row_lines = NULL, italic_rows = NULL) {
   if (is.null(df)) return(invisible(NULL))
-
+  
   if (is_word_output()) {
     df[] <- lapply(df, html_cell_to_plain)
     names(df) <- col_names
@@ -152,8 +152,8 @@ render_table <- function(df, col_names, align, header_label,
       kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"),
                     full_width = TRUE, font_size = 13) %>%
       add_header_above(setNames(c(1, ncol(df) - 1), c(" ", header_label)),
-                        background = c("white", header_color_html),
-                        color = c("white", "white"), bold = TRUE) %>%
+                       background = c("white", header_color_html),
+                       color = c("white", "white"), bold = TRUE) %>%
       column_spec(1, width = col1_width_html)
     if (ncol(df) > 1) k <- k %>% column_spec(2:ncol(df), width = other_width_html)
     if (!is.null(row_lines)) k <- k %>% row_spec(row_lines, extra_css = "border-bottom:1px solid #ccc;")

@@ -1,7 +1,7 @@
 ########################################
 #  10_visualizations.R                 #
 #  Created: 13/7/2026                  #
-#  Updated: 15/7/2026                  #
+#  Updated: 25/7/2026                  #
 ########################################
 
 # Reset environment -----------------------------------------------------
@@ -150,12 +150,16 @@ pal_state <- c("Kano" = "#1D6FA4", "Katsina" = "#BA7517")
 pal_zd <- c("Zero-dose" = "#C0312D", "Vaccinated" = "#5A9FD4")
 col_confirmed <- "#1D9E75"; col_offnet <- "#F4A261"; col_notrec <- "#C0312D"
 
+# Caption/subtitle grey darkened and enlarged per Prabin's readability
+# comment (c49, "grey text bit hard to read") — #888 at size 9 falls below
+# WCAG AA contrast on white; #595959 at size 10 clears it while still
+# reading as visually secondary to the plot itself.
 theme_diss <- function(bs = 12) {
   theme_minimal(base_size = bs) %+replace% theme(
     text = element_text(family = "serif"),
     plot.title = element_text(face = "bold", size = bs, hjust = 0, margin = margin(b = 4)),
-    plot.subtitle = element_text(size = bs - 2, colour = "#666", hjust = 0, margin = margin(b = 10)),
-    plot.caption = element_text(size = 9, colour = "#888", hjust = 0, margin = margin(t = 8), lineheight = 1.1),
+    plot.subtitle = element_text(size = bs - 1, colour = "#4d4d4d", hjust = 0, margin = margin(b = 10)),
+    plot.caption = element_text(size = 10, colour = "#595959", hjust = 0, margin = margin(t = 8), lineheight = 1.15),
     axis.title = element_text(size = bs - 1), axis.text = element_text(size = bs - 1, colour = "#333"),
     panel.grid.major.y = element_blank(),
     panel.grid.major.x = element_line(colour = "#e5e5e5", linewidth = 0.4),
@@ -172,7 +176,7 @@ theme_datharm <- function(bs = 12.5) {
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank(),
     plot.title = element_text(face = "bold", size = bs + 0.5),
-    plot.subtitle = element_text(color = "#666", size = bs - 2))
+    plot.subtitle = element_text(color = "#4d4d4d", size = bs - 1))
 }
 
 #----------------------------------------------------------------------------
@@ -235,12 +239,21 @@ match_lga_name <- function(name, state_name, lgas_sf) {
   best
 }
 
-sample_point_in_lga <- function(state_name, lga_name_matched, lgas_sf = kk_lgas) {
+# Cached by (state, LGA, ward): fig_1_1, fig_3_4b and fig_3_7b each plot
+# wards drawn from a different source table, so without a shared cache the
+# same ward could land at a different point on each map even under an
+# identical seed, since the three tables don't feed rows in the same order.
+ward_point_cache <- new.env()
+
+sample_point_in_lga <- function(state_name, lga_name_matched, ward, lgas_sf = kk_lgas) {
   na_point <- st_sfc(st_point(c(NA_real_, NA_real_)), crs = st_crs(lgas_sf))
+  key <- paste(state_name, lga_name_matched, ward, sep = "|||")
+  if (!is.null(ward_point_cache[[key]])) return(ward_point_cache[[key]])
   poly <- lgas_sf %>% filter(NAME_1 == state_name, NAME_2 == lga_name_matched)
   if (nrow(poly) == 0) return(na_point)
   pt <- st_sample(poly, size = 1, type = "random")
   if (length(pt) != 1) return(na_point)
+  ward_point_cache[[key]] <- pt
   pt
 }
 
@@ -262,7 +275,7 @@ theme_map_diss <- function(base_size = 12) {
   theme_void(base_size = base_size) +
     theme(
       plot.title      = element_text(face = "bold", size = base_size + 2, hjust = 0.5, margin = margin(b = 8)),
-      plot.caption    = element_text(size = base_size - 3.5, colour = "#888", hjust = 0, margin = margin(t = 10), lineheight = 1.15),
+      plot.caption    = element_text(size = base_size - 2.5, colour = "#595959", hjust = 0, margin = margin(t = 10), lineheight = 1.15),
       legend.position = "bottom", legend.box = "horizontal",
       legend.title    = element_text(size = base_size + 0.5, face = "bold"),
       legend.text     = element_text(size = base_size),
@@ -305,6 +318,11 @@ map_boundaries_loaded <- tryCatch({
           conditionMessage(e), call. = FALSE)
   FALSE
 })
+
+# Seeded once here, not per-figure -- ward_point_cache above means each
+# ward is only actually sampled the first time it's encountered (fig_1_1
+# runs first), so one seed covers all three ward-point maps.
+set.seed(2026)
 
 #----------------------------------------------------------------------------
 
@@ -431,7 +449,6 @@ if (tab31b_ok && !is.na(b_full_n) && !is.na(b_lag_n) && b_full_n == b_lag_n) {
 
 ll_path_map <- file.path(mch_dir, "01_linelisted_clean.rds")
 if (map_boundaries_loaded && require_file(ll_path_map, "Figure 1.1 footprint map")) {
-  set.seed(2026)
   ward_counts_11 <- readRDS(ll_path_map) %>%
     filter(woman_or_child == "child") %>%
     group_by(state, lga_name, facility_ward) %>%
@@ -444,7 +461,7 @@ if (map_boundaries_loaded && require_file(ll_path_map, "Figure 1.1 footprint map
   
   ward_pts_11 <- ward_counts_11 %>%
     rowwise() %>%
-    mutate(geometry = list(sample_point_in_lga(state, lga_matched))) %>%
+    mutate(geometry = list(sample_point_in_lga(state, lga_matched, facility_ward))) %>%
     ungroup()
   
   ward_counts_11_sf <- st_as_sf(
@@ -529,7 +546,7 @@ fig_2_1 <- ggplot() +
   labs(caption = "Each stage writes to one dataset. Two events fall outside the system boundary: children never enumerated, and vaccination\ndelivered off-network. Neither is recorded, and both bound what any downstream analysis can observe.") +
   theme_void() +
   theme(plot.title = element_text(family = "serif", face = "bold", size = 12, margin = margin(b = 6, l = 2)),
-        plot.caption = element_text(family = "serif", colour = "#888", size = 8.5, hjust = 0, margin = margin(t = 8, l = 2), lineheight = 1.1))
+        plot.caption = element_text(family = "serif", colour = "#595959", size = 9.5, hjust = 0, margin = margin(t = 8, l = 2), lineheight = 1.15))
 
 fig_titles[["fig_2_1"]] <- "Figure 2.1.  MCHTrack data pipeline and its structural blind spots"
 artifacts$fig_2_1_path <- save_fig(fig_2_1, "fig_2_1", width = 8.6, height = 4.2)
@@ -645,8 +662,8 @@ if (require_file(vm_path, "Figure 2.3 overdispersion")) {
     scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.12))) +
     labs(subtitle = "Variance far exceeds the mean in both LGAs · rules out a standard Poisson specification",
          x = NULL, y = "Daily visits",
-         caption = paste0("Variance-to-mean ratios computed live from 06_panel_daily.rds. Log-transformed OLS is retained for consistency\n",
-                          "with the zero-dose and recovery models; a negative binomial check appears in Figure 3.10.")) +
+         caption = paste0("Variance-to-mean ratios computed live from 06_panel_daily.rds. This overdispersion is why negative binomial,\n",
+                          "not log-transformed OLS, is the primary specification for all weather models; Figure 3.10 compares the two.")) +
     theme_diss(11)
 } else {
   fig_2_3 <- placeholder_plot("MISSING INPUT\n06_panel_daily.rds")
@@ -654,6 +671,85 @@ if (require_file(vm_path, "Figure 2.3 overdispersion")) {
 
 fig_titles[["fig_2_3"]] <- "Figure 2.3.  Overdispersion in daily facility visit counts"
 artifacts$fig_2_3_path <- save_fig(fig_2_3, "fig_2_3", width = 7.5, height = 3.6)
+
+########################################
+# Table 2.1 — Baseline characteristics #
+########################################
+
+bl_path <- file.path(reg_dir, "03_model_a_dataset.rds")
+if (require_file(bl_path, "Table 2.1 baseline characteristics")) {
+  bl <- readRDS(bl_path) %>% filter(in_primary_sample)
+  
+  bl_row <- function(df, label) {
+    tibble(
+      Site                          = label,
+      N                             = comma(nrow(df)),
+      `Female (%)`                  = paste0(round(mean(df$gender_female, na.rm = TRUE) * 100, 1), "%"),
+      `Age at registration, months` = paste0(round(median(df$age_months_at_reg, na.rm = TRUE), 1), " (",
+                                             round(quantile(df$age_months_at_reg, .25, na.rm = TRUE), 1), "–",
+                                             round(quantile(df$age_months_at_reg, .75, na.rm = TRUE), 1), ")"),
+      `Distance to facility, km`    = paste0(round(median(df$hf_distance_km, na.rm = TRUE), 2), " (",
+                                             round(quantile(df$hf_distance_km, .25, na.rm = TRUE), 2), "–",
+                                             round(quantile(df$hf_distance_km, .75, na.rm = TRUE), 2), ")"),
+      `Enrolment window`            = paste0(format(min(df$registration_date, na.rm = TRUE), "%b %Y"), "–",
+                                             format(max(df$registration_date, na.rm = TRUE), "%b %Y")),
+      `Zero-dose (%)`               = paste0(round(mean(df$zero_dose_penta, na.rm = TRUE) * 100, 1), "%")
+    )
+  }
+  
+  tab_2_1 <- bind_rows(
+    bl_row(bl %>% filter(state == "Kano"),    "Kano"),
+    bl_row(bl %>% filter(state == "Katsina"), "Katsina"),
+    bl_row(bl,                                "Overall")
+  )
+} else {
+  tab_2_1 <- tibble(Site = "MISSING INPUT", N = "03_model_a_dataset.rds")
+}
+
+fig_titles[["tab_2_1"]] <- "Table 2.1.  Baseline characteristics of enrolled children, by site (median, IQR in parentheses)"
+artifacts$tab_2_1 <- tab_2_1
+
+########################################
+# Figure 2.4 — Baseline distributions  #
+########################################
+
+if (require_file(bl_path, "Figure 2.4 baseline distributions")) {
+  p_age24 <- ggplot(bl %>% filter(age_months_at_reg <= 60), aes(x = age_months_at_reg, fill = state)) +
+    geom_histogram(bins = 40, position = "identity", alpha = 0.6, colour = NA) +
+    scale_fill_manual(values = pal_state) +
+    scale_y_continuous(labels = comma) +
+    labs(subtitle = "A. Age at registration", x = "Age at registration (months)", y = "Children") +
+    theme_diss(11)
+  
+  p_dist24 <- ggplot(bl %>% filter(hf_distance_km <= 5), aes(x = hf_distance_km, fill = state)) +
+    geom_histogram(bins = 45, position = "identity", alpha = 0.6, colour = NA) +
+    scale_fill_manual(values = pal_state) +
+    scale_x_continuous(labels = label_number(suffix = " km")) +
+    scale_y_continuous(labels = comma) +
+    labs(subtitle = "B. Distance to health facility", x = "Distance (km)", y = NULL) +
+    theme_diss(11)
+  
+  p_time24 <- ggplot(bl, aes(x = registration_date, fill = state)) +
+    geom_histogram(bins = 30, position = "identity", alpha = 0.6, colour = NA) +
+    scale_fill_manual(values = pal_state) +
+    scale_x_date(date_labels = "%b %Y") +
+    scale_y_continuous(labels = comma) +
+    labs(subtitle = "C. Enrolment over time", x = NULL, y = "Children") +
+    theme_diss(11)
+  
+  fig_2_4 <- (p_age24 | p_dist24 | p_time24) +
+    plot_annotation(
+      subtitle = paste0("Primary analytic sample · N = ", comma(nrow(bl)), " · corresponds to Table 2.1"),
+      caption = "Computed live from 03_model_a_dataset.rds.",
+      theme = theme(plot.title = element_text(family = "serif", face = "bold", size = 12.5),
+                    plot.subtitle = element_text(family = "serif", size = 10, colour = "#4d4d4d"),
+                    plot.caption = element_text(family = "serif", size = 10, colour = "#595959", hjust = 0, lineheight = 1.15)))
+} else {
+  fig_2_4 <- placeholder_plot("MISSING INPUT\n03_model_a_dataset.rds")
+}
+
+fig_titles[["fig_2_4"]] <- "Figure 2.4.  Baseline characteristics by site — age, distance, and enrolment timing"
+artifacts$fig_2_4_path <- save_fig(fig_2_4, "fig_2_4", width = 11, height = 4.0)
 
 #----------------------------------------------------------------------------
 
@@ -687,8 +783,8 @@ if (require_file(ma_path, "Figure 3.1 predictor distributions")) {
       subtitle = paste0("Primary analytic sample · N = ", comma(n_fig31), " · Rimi and GPS-error distances excluded"),
       caption = "Zero-dose children sit further along the distance tail and skew older at registration, though both distributions overlap\nsubstantially. A child can live close to a facility and still be missed.",
       theme = theme(plot.title = element_text(family = "serif", face = "bold", size = 12.5),
-                    plot.subtitle = element_text(family = "serif", size = 10, colour = "#666"),
-                    plot.caption = element_text(family = "serif", size = 9, colour = "#888", hjust = 0, lineheight = 1.1)))
+                    plot.subtitle = element_text(family = "serif", size = 10, colour = "#4d4d4d"),
+                    plot.caption = element_text(family = "serif", size = 10, colour = "#595959", hjust = 0, lineheight = 1.15)))
 } else {
   fig_3_1 <- placeholder_plot("MISSING INPUT\n03_model_a_dataset.rds")
   n_fig31 <- NA
@@ -954,7 +1050,7 @@ pB33 <- ggplot(coef_b33, aes(x = estimate, y = definition)) +
             fontface = "bold", colour = "#333") +
   annotate("text", x = max(coef_b33$ci_hi, na.rm = TRUE) * 0.55, y = 1.62,
            label = paste0(amplification, "× amplification"), size = 3.2,
-           family = "serif", fontface = "italic", colour = "#666") +
+           family = "serif", fontface = "italic", colour = "#4d4d4d") +
   scale_colour_manual(values = c("TRUE" = col_strict, "FALSE" = col_nonsig), guide = "none") +
   scale_fill_manual(values = c("TRUE" = col_strict, "FALSE" = "#d5d5d5"), guide = "none") +
   labs(subtitle = "B. Distance coefficient by zero-dose definition",
@@ -966,8 +1062,8 @@ fig_3_3 <- (pA33 / pB33) + plot_annotation(
   caption = paste0("Panel A: blue = significant at p < 0.05. Panel B: amber = significant at p < 0.01; grey = not significant.\n",
                    "Distance coefficient is ", amplification, "x larger under the strict definition than the primary one. Computed live from 01_model_a_zerodose_predictors.txt."),
   theme = theme(plot.title = element_text(family = "serif", face = "bold", size = 12.5),
-                plot.subtitle = element_text(family = "serif", size = 10, colour = "#666"),
-                plot.caption = element_text(family = "serif", size = 9, colour = "#888", hjust = 0, lineheight = 1.1)))
+                plot.subtitle = element_text(family = "serif", size = 10, colour = "#4d4d4d"),
+                plot.caption = element_text(family = "serif", size = 10, colour = "#595959", hjust = 0, lineheight = 1.15)))
 
 fig_titles[["fig_3_3"]] <- "Figure 3.3.  Zero-dose model — primary specification and definitional amplification"
 artifacts$fig_3_3_path <- save_fig(fig_3_3, "fig_3_3", width = 8.4, height = 5.4)
@@ -1026,7 +1122,6 @@ artifacts$fig_3_4_path <- save_fig(fig_3_4, "fig_3_4", width = 8.6, height = 6.0
 
 resid_classified_path <- file.path(resid_dir, "04_ward_residuals_classified.rds")
 if (map_boundaries_loaded && require_file(resid_classified_path, "Figure 3.4b ward residual map")) {
-  set.seed(2026)
   data_ward_resid_34b <- readRDS(resid_classified_path) %>%
     filter(!is.na(lga_name), !is.na(facility_ward)) %>%
     # n_ward is n_children (the real exported column). zd_count/non_zd_count
@@ -1039,7 +1134,7 @@ if (map_boundaries_loaded && require_file(resid_classified_path, "Figure 3.4b wa
   
   ward_pts_34b <- data_ward_resid_34b %>%
     rowwise() %>%
-    mutate(geometry = list(sample_point_in_lga(state, lga_matched))) %>%
+    mutate(geometry = list(sample_point_in_lga(state, lga_matched, facility_ward))) %>%
     ungroup()
   
   resid_sf_34b <- st_as_sf(
@@ -1146,7 +1241,7 @@ if (require_file(mb_path, "Figure 3.5 tracing outcomes")) {
       subtitle = paste0("N = ", comma(nrow(d35)), " tracing attempts, lag-time subset N = ", comma(nrow(lag_d))),
       caption = "Computed live from 03_model_b_dataset.rds. Panel A: outcomes as share of attempts within each method and state.\nPanel B: lag-time subset only (children with a matched prior facility visit).",
       theme = theme(plot.title = element_text(family = "serif", face = "bold", size = 12.5),
-                    plot.caption = element_text(family = "serif", size = 9, colour = "#888", hjust = 0, lineheight = 1.1)))
+                    plot.caption = element_text(family = "serif", size = 10, colour = "#595959", hjust = 0, lineheight = 1.15)))
   fig_titles[["fig_3_5"]] <- "Figure 3.5.  Tracing outcomes and timing"
 } else {
   fig_3_5 <- placeholder_plot("MISSING INPUT\n03_model_b_dataset.rds")
@@ -1247,7 +1342,6 @@ artifacts$fig_3_7_path <- save_fig(fig_3_7, "fig_3_7", width = 8, height = 4.2)
 
 dt_clean_path_37b <- file.path(mch_dir, "01_defaultertracing_clean.rds")
 if (map_boundaries_loaded && require_file(dt_clean_path_37b, "Figure 3.7b off-network map")) {
-  set.seed(2026)
   ward_offnet_37b <- readRDS(dt_clean_path_37b) %>%
     filter(!is.na(lga_name), !is.na(facility_ward)) %>%
     group_by(state, lga_name, facility_ward) %>%
@@ -1265,7 +1359,7 @@ if (map_boundaries_loaded && require_file(dt_clean_path_37b, "Figure 3.7b off-ne
   
   ward_pts_37b <- ward_offnet_37b %>%
     rowwise() %>%
-    mutate(geometry = list(sample_point_in_lga(state, lga_matched))) %>%
+    mutate(geometry = list(sample_point_in_lga(state, lga_matched, facility_ward))) %>%
     ungroup()
   
   ward_offnet_37b_sf <- st_as_sf(
@@ -1356,8 +1450,8 @@ if (require_file(pj_path, "Figure 3.8 daily visit diagnostics")) {
       subtitle = "Kano · Ungogo and Gabasawa · Aug 2024 – Mar 2026",
       caption = "Computed live from 06_panel_daily.rds. Counts are zero-inflated and right-skewed (A). Quiet days cluster on weekends (B)\nand around religious holidays, a calendar-driven rather than weather-driven pattern that motivates the null weather findings.",
       theme = theme(plot.title = element_text(family = "serif", face = "bold", size = 12.5),
-                    plot.subtitle = element_text(family = "serif", size = 10, colour = "#666"),
-                    plot.caption = element_text(family = "serif", size = 9, colour = "#888", hjust = 0, lineheight = 1.1)))
+                    plot.subtitle = element_text(family = "serif", size = 10, colour = "#4d4d4d"),
+                    plot.caption = element_text(family = "serif", size = 10, colour = "#595959", hjust = 0, lineheight = 1.15)))
   fig_titles[["fig_3_8"]] <- "Figure 3.8.  Daily facility visit diagnostics"
 } else {
   fig_3_8 <- placeholder_plot("MISSING INPUT\n06_panel_daily.rds")
@@ -1372,37 +1466,54 @@ artifacts$fig_3_8_path <- save_fig(fig_3_8, "fig_3_8", width = 9, height = 3.6)
 # Reads 02 (precip), 06 (heat), 08 (NDVI)      #
 ################################################
 
-precip_txt  <- file.path(chirps_dir, "02_regression_precip_visits.txt")
-heat_txt    <- file.path(era_dir, "06_regression_daily.txt")
-ndvi_txt    <- file.path(ndvi_dir, "08_regression_ndvi_kano.txt")
+# NB is primary per Prabin's second-draft review (c84). W2-W6 all have an
+# NB counterpart (built in 02/06/08's NB-comparison sections) and are read
+# from there; W1 (precip monthly, LGA FE only) never got an NB version in
+# 02, so it stays OLS — a specification-building row, not a headline number,
+# same treatment it's always had. The primary OLS files are still loaded
+# too: the robustness table further down needs the original no-offset OLS
+# coefficients as its baseline column.
 
-precip_ok <- require_file(precip_txt, "weather table — precipitation")
-heat_ok   <- require_file(heat_txt, "weather table — heat (needs 06's new .txt export)")
-ndvi_ok   <- require_file(ndvi_txt, "weather table — NDVI")
+precip_txt    <- file.path(chirps_dir, "02_regression_precip_visits.txt")
+heat_txt      <- file.path(era_dir, "06_regression_daily.txt")
+ndvi_txt      <- file.path(ndvi_dir, "08_regression_ndvi_kano.txt")
+precip_nb_txt <- file.path(chirps_dir, "02_regression_precip_nb_comparison.txt")
+heat_nb_txt   <- file.path(era_dir, "06_regression_nb_comparison.txt")
+ndvi_nb_txt   <- file.path(ndvi_dir, "08_regression_ndvi_nb_comparison.txt")
 
-precip_parsed <- if (precip_ok) parse_ms_txt(precip_txt) else NULL
-heat_parsed   <- if (heat_ok) parse_ms_txt(heat_txt) else NULL
-ndvi_parsed   <- if (ndvi_ok) parse_ms_txt(ndvi_txt) else NULL
+precip_ok    <- require_file(precip_txt, "weather table — precipitation")
+heat_ok      <- require_file(heat_txt, "weather table — heat")
+ndvi_ok      <- require_file(ndvi_txt, "weather table — NDVI")
+precip_nb_ok <- require_file(precip_nb_txt, "NB comparison — precipitation")
+heat_nb_ok   <- require_file(heat_nb_txt, "NB comparison — heat")
+ndvi_nb_ok   <- require_file(ndvi_nb_txt, "NB comparison — NDVI")
 
-# W1: monthly precip anomaly, LGA FE (P1, col 1)
+precip_parsed    <- if (precip_ok) parse_ms_txt(precip_txt) else NULL
+heat_parsed      <- if (heat_ok) parse_ms_txt(heat_txt) else NULL
+ndvi_parsed      <- if (ndvi_ok) parse_ms_txt(ndvi_txt) else NULL
+precip_nb_parsed <- if (precip_nb_ok) parse_ms_txt(precip_nb_txt) else NULL
+heat_nb_parsed   <- if (heat_nb_ok) parse_ms_txt(heat_nb_txt) else NULL
+ndvi_nb_parsed   <- if (ndvi_nb_ok) parse_ms_txt(ndvi_nb_txt) else NULL
+
+# W1: monthly precip anomaly, LGA FE (P1, col 1) — no NB version exists
 w1 <- extract_coef_se(precip_parsed, "precip_anomaly_pct", col = 1)
-# W2: daily precip anomaly, LGA+DOW+month-year FE (P4, col 4)
-w2 <- extract_coef_se(precip_parsed, "precip_anomaly_pct", col = 4)
-# W3: binary extreme heat, LGA+DOW+month-year FE (D3, col 3)
-w3 <- extract_coef_se(heat_parsed, "extreme_heat_38", col = 3)
-# W4: continuous UTCI, LGA+DOW+month-year FE (D4, col 4)
-w4 <- extract_coef_se(heat_parsed, "utci_dt_c", col = 4)
-# W5: NDVI vim level, LGA FE (N1, col 1)
-w5 <- extract_coef_se(ndvi_parsed, "vim_c", col = 1)
-# W6: NDVI viq anomaly, LGA+month-year FE (N2, col 2)
-w6 <- extract_coef_se(ndvi_parsed, "viq_c", col = 2)
+# W2: daily precip anomaly, LGA+DOW+month-year FE (P4_nb, col 1 of NB file)
+w2 <- extract_coef_se(precip_nb_parsed, "precip_anomaly_pct", col = 1)
+# W3: binary extreme heat, LGA+DOW+month-year FE (D3_nb, col 1 of NB file)
+w3 <- extract_coef_se(heat_nb_parsed, "extreme_heat_38", col = 1)
+# W4: continuous UTCI, LGA+DOW+month-year FE (D4_nb, col 3 of NB file)
+w4 <- extract_coef_se(heat_nb_parsed, "utci_dt_c", col = 3)
+# W5: NDVI vim level, LGA FE (N1_nb, col 1 of NB file)
+w5 <- extract_coef_se(ndvi_nb_parsed, "vim_c", col = 1)
+# W6: NDVI viq anomaly, LGA+month-year FE (N2_nb, col 3 of NB file)
+w6 <- extract_coef_se(ndvi_nb_parsed, "viq_c", col = 3)
 
-w1_n <- fb(ev(precip_parsed, "Num.Obs", 1), "NA"); w1_r2 <- fb(ev(precip_parsed, "R2", 1), "NA")
-w2_n <- fb(ev(precip_parsed, "Num.Obs", 4), "NA"); w2_r2 <- fb(ev(precip_parsed, "R2", 4), "NA")
-w3_n <- fb(ev(heat_parsed, "Num.Obs", 3), "NA");   w3_r2 <- fb(ev(heat_parsed, "R2", 3), "NA")
-w4_n <- fb(ev(heat_parsed, "Num.Obs", 4), "NA");   w4_r2 <- fb(ev(heat_parsed, "R2", 4), "NA")
-w5_n <- fb(ev(ndvi_parsed, "Num.Obs", 1), "NA");   w5_r2 <- fb(ev(ndvi_parsed, "R2", 1), "NA")
-w6_n <- fb(ev(ndvi_parsed, "Num.Obs", 2), "NA");   w6_r2 <- fb(ev(ndvi_parsed, "R2", 2), "NA")
+w1_n <- fb(ev(precip_parsed, "Num.Obs", 1), "NA");    w1_r2 <- fb(ev(precip_parsed, "R2", 1), "NA")
+w2_n <- fb(ev(precip_nb_parsed, "Num.Obs", 1), "NA"); w2_r2 <- fb(ev(precip_nb_parsed, "R2", 1), "NA")
+w3_n <- fb(ev(heat_nb_parsed, "Num.Obs", 1), "NA");   w3_r2 <- fb(ev(heat_nb_parsed, "R2", 1), "NA")
+w4_n <- fb(ev(heat_nb_parsed, "Num.Obs", 3), "NA");   w4_r2 <- fb(ev(heat_nb_parsed, "R2", 3), "NA")
+w5_n <- fb(ev(ndvi_nb_parsed, "Num.Obs", 1), "NA");   w5_r2 <- fb(ev(ndvi_nb_parsed, "R2", 1), "NA")
+w6_n <- fb(ev(ndvi_nb_parsed, "Num.Obs", 3), "NA");   w6_r2 <- fb(ev(ndvi_nb_parsed, "R2", 3), "NA")
 
 tab_weather <- tribble(~Spec, ~Variable, ~Measure, ~Coef_CI, ~Panel, ~FE, ~N, ~R2,
                        "W1", "Precipitation", "Monthly precipitation anomaly (% of long-term average)", ci_cell(w1$coef, w1$se), "Monthly", "LGA", w1_n, w1_r2,
@@ -1414,28 +1525,16 @@ tab_weather <- tribble(~Spec, ~Variable, ~Measure, ~Coef_CI, ~Panel, ~FE, ~N, ~R
 artifacts$tab_weather <- tab_weather
 
 ########################################
-# Figure 3.10 slot — NB comparison,    #
-# all three weather variables          #
+# Figure 3.10 slot — NB (primary) vs   #
+# OLS, all three weather variables     #
 ########################################
 
-precip_nb_txt <- file.path(chirps_dir, "02_regression_precip_nb_comparison.txt")
-heat_nb_txt   <- file.path(era_dir, "06_regression_nb_comparison.txt")
-ndvi_nb_txt   <- file.path(ndvi_dir, "08_regression_ndvi_nb_comparison.txt")
-
-precip_nb_ok <- require_file(precip_nb_txt, "NB comparison — precipitation")
-heat_nb_ok   <- require_file(heat_nb_txt, "NB comparison — heat")
-ndvi_nb_ok   <- require_file(ndvi_nb_txt, "NB comparison — NDVI")
-
-precip_nb_parsed <- if (precip_nb_ok) parse_ms_txt(precip_nb_txt) else NULL
-heat_nb_parsed   <- if (heat_nb_ok) parse_ms_txt(heat_nb_txt) else NULL
-ndvi_nb_parsed   <- if (ndvi_nb_ok) parse_ms_txt(ndvi_nb_txt) else NULL
-
-precip_ols_nb <- extract_coef_se(precip_nb_parsed, "precip_anomaly_pct", col = 1)
-precip_nb_nb  <- extract_coef_se(precip_nb_parsed, "precip_anomaly_pct", col = 2)
-heat_ols_nb   <- extract_coef_se(heat_nb_parsed, "extreme_heat_38", col = 1)
-heat_nb_nb    <- extract_coef_se(heat_nb_parsed, "extreme_heat_38", col = 2)
-ndvi_ols_nb   <- extract_coef_se(ndvi_nb_parsed, "vim_c", col = 1)
-ndvi_nb_nb    <- extract_coef_se(ndvi_nb_parsed, "vim_c", col = 2)
+precip_nb_nb  <- extract_coef_se(precip_nb_parsed, "precip_anomaly_pct", col = 1)
+precip_ols_nb <- extract_coef_se(precip_nb_parsed, "precip_anomaly_pct", col = 2)
+heat_nb_nb    <- extract_coef_se(heat_nb_parsed, "extreme_heat_38", col = 1)
+heat_ols_nb   <- extract_coef_se(heat_nb_parsed, "extreme_heat_38", col = 2)
+ndvi_nb_nb    <- extract_coef_se(ndvi_nb_parsed, "vim_c", col = 1)
+ndvi_ols_nb   <- extract_coef_se(ndvi_nb_parsed, "vim_c", col = 2)
 
 nb_ci <- function(coef, se) {
   if (is.na(coef) || is.na(se)) return("NA")
@@ -1444,12 +1543,12 @@ nb_ci <- function(coef, se) {
 nb_sig <- function(coef, se) { s <- star2(coef, se); if (s == "") "n.s." else s }
 
 fig_3_10 <- tribble(~Variable, ~Specification, ~Coef, ~SE, ~CI, ~Sig,
-                    "Precipitation", "OLS — log(visits + 1)",   precip_ols_nb$coef, precip_ols_nb$se, nb_ci(precip_ols_nb$coef, precip_ols_nb$se), nb_sig(precip_ols_nb$coef, precip_ols_nb$se),
-                    "Precipitation", "Negative binomial — counts", precip_nb_nb$coef, precip_nb_nb$se, nb_ci(precip_nb_nb$coef, precip_nb_nb$se), nb_sig(precip_nb_nb$coef, precip_nb_nb$se),
-                    "Heat",          "OLS — log(visits + 1)",   heat_ols_nb$coef, heat_ols_nb$se, nb_ci(heat_ols_nb$coef, heat_ols_nb$se), nb_sig(heat_ols_nb$coef, heat_ols_nb$se),
-                    "Heat",          "Negative binomial — counts", heat_nb_nb$coef, heat_nb_nb$se, nb_ci(heat_nb_nb$coef, heat_nb_nb$se), nb_sig(heat_nb_nb$coef, heat_nb_nb$se),
-                    "NDVI",          "OLS — log(visits + 1)",   ndvi_ols_nb$coef, ndvi_ols_nb$se, nb_ci(ndvi_ols_nb$coef, ndvi_ols_nb$se), nb_sig(ndvi_ols_nb$coef, ndvi_ols_nb$se),
-                    "NDVI",          "Negative binomial — counts", ndvi_nb_nb$coef, ndvi_nb_nb$se, nb_ci(ndvi_nb_nb$coef, ndvi_nb_nb$se), nb_sig(ndvi_nb_nb$coef, ndvi_nb_nb$se))
+                    "Precipitation", "Negative binomial — counts (primary)", precip_nb_nb$coef, precip_nb_nb$se, nb_ci(precip_nb_nb$coef, precip_nb_nb$se), nb_sig(precip_nb_nb$coef, precip_nb_nb$se),
+                    "Precipitation", "OLS — log(visits + 1)",                precip_ols_nb$coef, precip_ols_nb$se, nb_ci(precip_ols_nb$coef, precip_ols_nb$se), nb_sig(precip_ols_nb$coef, precip_ols_nb$se),
+                    "Heat",          "Negative binomial — counts (primary)", heat_nb_nb$coef, heat_nb_nb$se, nb_ci(heat_nb_nb$coef, heat_nb_nb$se), nb_sig(heat_nb_nb$coef, heat_nb_nb$se),
+                    "Heat",          "OLS — log(visits + 1)",                heat_ols_nb$coef, heat_ols_nb$se, nb_ci(heat_ols_nb$coef, heat_ols_nb$se), nb_sig(heat_ols_nb$coef, heat_ols_nb$se),
+                    "NDVI",          "Negative binomial — counts (primary)", ndvi_nb_nb$coef, ndvi_nb_nb$se, nb_ci(ndvi_nb_nb$coef, ndvi_nb_nb$se), nb_sig(ndvi_nb_nb$coef, ndvi_nb_nb$se),
+                    "NDVI",          "OLS — log(visits + 1)",                ndvi_ols_nb$coef, ndvi_ols_nb$se, nb_ci(ndvi_ols_nb$coef, ndvi_ols_nb$se), nb_sig(ndvi_ols_nb$coef, ndvi_ols_nb$se))
 artifacts$tab_3_10 <- fig_3_10
 
 ########################################
@@ -1515,11 +1614,12 @@ spline_any_sig <- function(parsed, term_pattern, col) {
   if (any_sig) "Yes — at least one spline term p<0.05" else "No spline term significant"
 }
 
-# Original (matching FE structure) vs offset vs NB-offset vs spline
-w2_orig    <- w2   # precip daily, P4 — already extracted above (col 4, precip_parsed)
-w3_orig    <- w3   # heat binary, D3 — already extracted above (col 3, heat_parsed)
-w4_orig    <- w4   # heat continuous, D4 — already extracted above (col 4, heat_parsed)
-w6_orig    <- w6   # NDVI viq, N2 — already extracted above (col 2, ndvi_parsed)
+# OLS-only baselines for the "Original" column — independent of w2/w3/w4/w6
+# above, which now hold NB values. Sourced fresh from the primary OLS files.
+w2_orig    <- extract_coef_se(precip_parsed, "precip_anomaly_pct", col = 4)  # precip daily, P4
+w3_orig    <- extract_coef_se(heat_parsed, "extreme_heat_38", col = 3)       # heat binary, D3
+w4_orig    <- extract_coef_se(heat_parsed, "utci_dt_c", col = 4)             # heat continuous, D4
+w6_orig    <- extract_coef_se(ndvi_parsed, "viq_c", col = 2)                 # NDVI viq, N2
 w5b_orig   <- extract_coef_se(ndvi_parsed, "vim_c", col = 4)  # NDVI vim, N4 (not N1/w5 — different FE)
 
 precip_off    <- extract_coef_se(precip_rob_parsed, "precip_anomaly_pct", col = 2)
@@ -1545,13 +1645,6 @@ tab_weather_robustness <- tribble(
   "NDVI, viq anomaly (N2)",      "viq_c",               ci_cell(w6_orig$coef, w6_orig$se), ci_cell(ndvi_viq_off$coef, ndvi_viq_off$se), "N/A — NB-offset only built for vim (N4)", "N/A — no spline built for viq"
 )
 artifacts$tab_weather_robustness <- tab_weather_robustness
-
-cat("--- Weather robustness table (offset + spline, Prabin 15/7/2026) ---\n")
-print(tab_weather_robustness)
-cat("\nenrolled_children (the offset denominator) is a cumulative-registration\n")
-cat("stock from 01_mchtrack_import.R, not a true point-in-time eligible-\n")
-cat("population count — treat this table as a check on whether the null\n")
-cat("finding survives the offset/spline, not as a finished re-analysis.\n\n")
 
 ########################################
 # Figure — Weather robustness          #
@@ -1604,7 +1697,7 @@ fig_weather_robustness <- ggplot(rob_coef_rows, aes(x = coef, y = spec, colour =
   geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.18, linewidth = 0.9) +
   geom_point(size = 2.6) +
   geom_text(data = spline_annot, aes(x = -Inf, y = 0.55, label = lab), inherit.aes = FALSE,
-            hjust = -0.05, vjust = 1, size = 2.4, family = "serif", fontface = "italic", colour = "#666") +
+            hjust = -0.05, vjust = 1, size = 2.6, family = "serif", fontface = "italic", colour = "#4d4d4d") +
   scale_colour_manual(values = c("TRUE" = col_sig, "FALSE" = col_nonsig), guide = "none") +
   facet_wrap(~variable, scales = "free_x", ncol = 3) +
   labs(x = "Coefficient (log-visits scale)", y = NULL,
@@ -1740,7 +1833,7 @@ if (weather_maps_ok) {
           "Each map averages the underlying weather variable across its full study window per LGA actually present in\n",
           "that variable's data (panel B is Kano-only by construction -- see note above). Physical reference for the null\n",
           "result in III.C/IV.B. Administrative boundaries: GADM v4.1 (gadm.org)."),
-        theme = theme(plot.caption = element_text(family = "serif", size = 8, colour = "#888", hjust = 0, margin = margin(t = 10))))
+        theme = theme(plot.caption = element_text(family = "serif", size = 9.5, colour = "#595959", hjust = 0, margin = margin(t = 10), lineheight = 1.15)))
   }
 } else {
   fig_weather_maps <- placeholder_plot("MISSING INPUT\nsee Figure 3.9b requirements, or GADM boundaries unavailable")

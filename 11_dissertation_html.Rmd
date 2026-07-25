@@ -44,22 +44,23 @@ source("11_dissertation_setup.R")
 ```
 
 <div class="frontmatter">
-<div class="titleblock">
-<div class="subinfo">
 
+<div class="titleblock">
+
+# Zero-Dose Children and Defaulter Recovery in Northern Nigeria: Evidence from the MCHTrack Programme
+
+<div class="subinfo">
+Examination Candidate Number: 1102514<br>
+`r {mo<-c('January','February','March','April','May','June','July','August','September','October','November','December'); y<-as.integer(format(Sys.Date(),'%Y')); if (y>2100) y<-y-543; sprintf('%d %s %d', as.integer(format(Sys.Date(),'%d')), mo[as.integer(format(Sys.Date(),'%m'))], y)}`<br>
 MSc in International Health and Tropical Medicine<br>
 Nuffield Department of Medicine, University of Oxford
 </div>
 
 <div class="wordcount">
-Word count: 10,293 (inclusive of visualisation placeholders and callouts; excludes abstract, references, tables, figures and appendices per exam conventions) — to be condensed in the final draft
+Word count: 10,506 (inclusive of visualisation placeholders and callouts; excludes abstract, references, tables, figures and appendices per exam conventions)
 </div>
 
 </div>
-
-<br>
-<br>
-<br>
 
 <hr class="section-break">
 
@@ -67,29 +68,26 @@ Word count: 10,293 (inclusive of visualisation placeholders and callouts; exclud
 
 ## Candidate's Contribution and Declaration
 
-_This dissertation analyses programme data from MCHTrack, a community health worker-based digital immunisation tracking system operated by DATHARM, a Nigerian non-governmental organisation, across Kano and Katsina states in northern Nigeria between August 2024 and March 2026._
+This dissertation analyses programme data from MCHTrack, a community health worker-based digital immunisation tracking system operated by DATHARM, a Nigerian non-governmental organisation, across Kano and Katsina states in northern Nigeria between 1 August 2024 and 31 March 2026.
 
-_The candidate conducted a six-week in-person placement with DATHARM at their offices in Abuja, Nigeria, during which time the primary data were obtained and fieldwork was conducted. All quantitative analysis, including data cleaning, model specification, regression analysis, geospatial and weather data integration, and results interpretation, was designed and performed independently by the candidate using R. The candidate independently reviewed and verified all citations in the final draft. The analytical pipeline is documented across eight R scripts, which are provided as supplementary material alongside a link to the project's GitHub repository._
+The candidate conducted a six-week in-person placement with DATHARM at their offices in Abuja, Nigeria, during which time the primary data were obtained and fieldwork was conducted. All quantitative analysis, including data cleaning, model specification, regression analysis, geospatial and weather data integration, and results interpretation, was designed and performed independently by the candidate using R. The candidate independently reviewed and verified all citations in the final draft. The analytical pipeline is documented across eight R scripts, which are provided as supplementary material alongside a link to the project's GitHub repository.
 
-_The candidate undertook two site visits to primary healthcare centres in the wider Abuja area for contextual grounding, and held informal conversations with DATHARM staff, including programme coordinators for Kano and Katsina, which informed the qualitative context presented in the discussion. These conversations were informal and observational in nature; no structured interview protocol was applied and no independent qualitative analysis was conducted._
+The candidate undertook two site visits to primary healthcare centres in the wider Abuja area for contextual grounding, and held informal conversations with DATHARM staff, including programme coordinators for Kano and Katsina, which informed the qualitative context presented in the discussion. These conversations were informal and observational in nature; no structured interview protocol was applied and no independent qualitative analysis was conducted.
 
-_The following assistance was received during this project. Academic supervision was provided by Dr Prabin Dahal and Dr Aisha Adamu (primary supervisors), Dr Lucy Harrison, and a geospatial methods advisor. Supervisors reviewed a complete first draft of the dissertation and provided written feedback. Raw programme data were provided by DATHARM's data manager, who also responded to clarifying questions regarding specific data anomalies identified during the audit. DATHARM's Chief Executive Officer, Amina Ahmad, is named as a collaborator on this work and provided programme context and review. A research partner, Ahmed Ismail, conducted a parallel and independently written analysis of delivery mode effectiveness using the same MCHTrack dataset; his analysis does not form part of this dissertation._
+The following assistance was received during this project. Academic supervision was provided by Dr Prabin Dahal and Dr Aisha Adamu (primary supervisors), Dr Lucy Harrison, and a geospatial methods advisor. Supervisors reviewed a complete first draft of the dissertation and provided written feedback. Raw programme data were provided by DATHARM's data manager, who also responded to clarifying questions regarding specific data anomalies identified during the audit. DATHARM's Chief Executive Officer, Amina Ahmad, is named as a collaborator on this work and provided programme context and review. A research partner, Ahmed Ismail, conducted a parallel and independently written analysis of delivery mode effectiveness using the same MCHTrack dataset; his analysis does not form part of this dissertation.
 
-_Statistical advice was obtained from supervisors during the course of normal supervision meetings. No specialist statistical consultancy was engaged._
+Statistical advice was obtained from supervisors during the course of normal supervision meetings. No specialist statistical consultancy was engaged.
 
 ### Research ethics
 
-_This study did not require formal ethics review. The analysis is based entirely on routinely collected, pseudonymised programme data provided by DATHARM. No primary data collection was conducted by the candidate, and there was no direct engagement with the beneficiary population at any stage of the research. The research plan was reviewed as part of the placement proposal process through the MSc IHTM programme prior to the placement commencing, and no concerns requiring formal ethics referral were identified at that stage._
+DATHARM's collection of MCHTrack programme data was conducted under ethical approval secured through the relevant Nigerian Federal and State Ministry of Health channels, as part of its routine public health programming in Kano and Katsina. The candidate's access to this data was governed by data use agreements signed with DATHARM, not by a separate ethics review process: this dissertation is a secondary analysis of routinely collected, pseudonymised programme data already covered by DATHARM's own regulatory approvals, with no primary data collection and no direct engagement with the beneficiary population at any stage of the research. On this basis, no additional ethical approval was sought specifically for the dissertation. The research plan was reviewed as part of the placement proposal process through the MSc IHTM programme prior to the placement commencing, and no concerns requiring formal ethics referral were identified at that stage.
 
 </div>
 
 </div>
-
-<br>
-<br>
-<br>
 
 <hr class="section-break">
 
 ```{r child-body, child="11_dissertation_body.Rmd"}
 ```
+                                                                                     
