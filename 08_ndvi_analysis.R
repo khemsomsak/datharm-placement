@@ -1,10 +1,8 @@
 ########################################
 #  08_ndvi_analysis.R                  #
 #  Created: June 2026                  #
-#  Updated: 15/7/2026                  #
+#  Updated: 24/7/2026                  #
 ########################################
-
-# Reset environment -----------------------------------------------------
 
 rm(list = ls())
 setwd("C:/Users/HP/Documents/GitHub/datharm-placement")
@@ -20,7 +18,6 @@ dir.create(ndvi_raw,   showWarnings = FALSE, recursive = TRUE)
 dir.create(import_dir, showWarnings = FALSE, recursive = TRUE)
 dir.create(out_dir,    showWarnings = FALSE, recursive = TRUE)
 
-# Analysis window — match MCHTrack programme period
 window_start <- as.Date("2024-08-01")
 window_end   <- as.Date("2026-03-31")
 
@@ -30,7 +27,7 @@ library(lubridate)
 library(ggplot2)
 library(patchwork)
 library(fixest)        # feols() / fenegbin() for panel regression
-library(modelsummary)  # clean regression output tables
+library(modelsummary)
 library(scales)
 
 #----------------------------------------------------------------------------
@@ -39,17 +36,9 @@ library(scales)
 # 1. PCODE reference table        #
 ###################################
 
-# Standard Nigeria PCODE mapping for target LGAs
-# Kano state = NG019, Katsina state = NG020
-# LGA codes confirmed from OCHA Nigeria administrative boundaries
-#
-# NOTE (13/7/2026): this table's target-LGA codes (Ungogo = NG019013,
-# Gabasawa = NG019006) were used as the reference to correct a conflicting
-# pcode assignment found in 02_chirps_import_analysis.R's lookup table,
-# which had these same two LGAs under two different, mutually inconsistent
-# pcodes. This table's codes are treated as authoritative below because
-# this comment cites a source; if that citation is wrong, both files need
-# re-checking against the actual OCHA shapefile.
+# Ungogo = NG019013, Gabasawa = NG019006, sourced from OCHA Nigeria admin
+# boundaries. Used as the reference to fix a conflicting pcode assignment
+# in 02_chirps_import_analysis.R's own lookup for these same two LGAs.
 
 lga_ref <- tribble(
   ~PCODE,      ~state,    ~lga_name,          ~context,        ~include,
@@ -115,32 +104,21 @@ lga_ref <- tribble(
   "NG020034",  "Katsina", "Zango",             "Rural",         TRUE
 )
 
-cat("LGA reference table built:", nrow(lga_ref), "LGAs\n")
-cat("Included:", sum(lga_ref$include), "| Excluded:", sum(!lga_ref$include), "\n\n")
-
 #----------------------------------------------------------------------------
 
 ###################################
 # 2. Load and clean NDVI data     #
 ###################################
 
-# File location — copy from project root to working data folder if needed
 ndvi_src <- "02_data/03_external/07_NDVI.csv"
 
 if (!file.exists(ndvi_src)) {
-  # Try project root (where it was uploaded)
-  ndvi_src <- "ngandvisubnat5ytd.csv"
+  ndvi_src <- "ngandvisubnat5ytd.csv"  # fallback: project root
 }
-
-cat("Loading NDVI data from:", ndvi_src, "\n")
 
 ndvi_raw_data <- read_csv(ndvi_src, show_col_types = FALSE) %>%
   clean_names()
 
-cat("Raw rows:", nrow(ndvi_raw_data), "\n")
-cat("Columns:", names(ndvi_raw_data), "\n\n")
-
-# Clean and filter to Kano + Katsina, LGA level
 ndvi_clean <- ndvi_raw_data %>%
   mutate(date = as.Date(date)) %>%
   filter(
@@ -158,9 +136,7 @@ ndvi_clean <- ndvi_raw_data %>%
       day(date) <= 20 ~ 2L,
       TRUE            ~ 3L
     ),
-    # Dekad-within-year label for plots
     dekad_label = paste0(format(date, "%b"), "-D", dekad_num),
-    # Agricultural season classification
     ag_season = case_when(
       month_num %in% c(7, 8, 9)     ~ "Peak growing (Jul-Sep)",
       month_num %in% c(10, 11)      ~ "Harvest (Oct-Nov)",
@@ -176,12 +152,6 @@ ndvi_clean <- ndvi_raw_data %>%
     ))
   )
 
-cat("Clean rows (Kano + Katsina LGA level):", nrow(ndvi_clean), "\n")
-cat("States:", unique(ndvi_clean$state), "\n")
-cat("Date range:", format(min(ndvi_clean$date), "%b %Y"),
-    "to", format(max(ndvi_clean$date), "%b %Y"), "\n")
-cat("Dekads per LGA:", ndvi_clean %>% count(pcode) %>% pull(n) %>% mean() %>% round(0), "\n\n")
-
 #----------------------------------------------------------------------------
 
 ###################################
@@ -191,18 +161,13 @@ cat("Dekads per LGA:", ndvi_clean %>% count(pcode) %>% pull(n) %>% mean() %>% ro
 ndvi_prog <- ndvi_clean %>%
   filter(date >= window_start, date <= window_end, include == TRUE)
 
-cat("Programme window rows:", nrow(ndvi_prog), "\n")
-cat("Kano LGAs:", sum(ndvi_prog$state == "Kano" & !duplicated(ndvi_prog$pcode[ndvi_prog$state=="Kano"])), "\n")
-cat("Katsina LGAs:", sum(ndvi_prog$state == "Katsina" & !duplicated(ndvi_prog$pcode[ndvi_prog$state=="Katsina"])), "\n")
-cat("Dekads in window:", n_distinct(ndvi_prog$date), "\n\n")
-
 #----------------------------------------------------------------------------
 
 ###################################
 # 4. Variability diagnostic       #
 ###################################
 
-cat("=== VARIABILITY DIAGNOSTIC ===\n\n")
+# Feeds 07_ndvi_variability_summary.csv (Section 8) and Plot 4 (Section 6)
 
 var_summary <- ndvi_prog %>%
   group_by(state, pcode, lga_name) %>%
@@ -225,57 +190,6 @@ var_summary <- ndvi_prog %>%
       TRUE           ~ "Low variation — unlikely to yield signal"
     )
   )
-
-cat("--- Variability by LGA ---\n")
-print(var_summary %>%
-        select(state, lga_name, mean_vim, sd_vim, range_vim, cv_vim, verdict) %>%
-        arrange(state, desc(sd_vim)),
-      n = 60)
-
-# Cross-LGA spatial variation
-cat("\n--- Cross-LGA spatial variation (SD of LGA means) ---\n")
-var_summary %>%
-  group_by(state) %>%
-  summarise(
-    n_lgas         = n(),
-    mean_vim_state = round(mean(mean_vim), 4),
-    sd_lga_means   = round(sd(mean_vim), 4),
-    range_lga_means = round(max(mean_vim) - min(mean_vim), 4),
-    .groups = "drop"
-  ) %>% print()
-
-# Agricultural season means — key diagnostic for opportunity cost mechanism
-cat("\n--- Mean vim by agricultural season (pooled across LGAs) ---\n")
-ndvi_prog %>%
-  group_by(state, ag_season) %>%
-  summarise(
-    mean_vim = round(mean(vim, na.rm = TRUE), 4),
-    n        = n(),
-    .groups  = "drop"
-  ) %>%
-  arrange(state, ag_season) %>%
-  print()
-
-#----------------------------------------------------------------------------
-
-###################################
-# 5. Target LGA comparison        #
-###################################
-
-cat("\n--- Target LGAs: Ungogo vs Gabasawa (Kano) ---\n")
-ndvi_prog %>%
-  filter(lga_name %in% c("Ungogo", "Gabasawa")) %>%
-  group_by(lga_name) %>%
-  summarise(
-    n_dekads = n(),
-    mean_vim = round(mean(vim), 4),
-    sd_vim   = round(sd(vim), 4),
-    min_vim  = round(min(vim), 4),
-    max_vim  = round(max(vim), 4),
-    peak_month = month(date[which.max(vim)], label = TRUE),
-    trough_month = month(date[which.min(vim)], label = TRUE),
-    .groups = "drop"
-  ) %>% print()
 
 #----------------------------------------------------------------------------
 
@@ -399,8 +313,6 @@ p4 <- ggplot(var_summary,
         plot.title      = element_text(face = "bold"),
         axis.text.y     = element_text(size = 8))
 
-# -- Combine -----------------------------------------------------------
-
 top_row    <- p1 + p2
 bottom_row <- p3 + p4
 
@@ -420,19 +332,15 @@ ggsave(
   width    = 14, height = 12, dpi = 300
 )
 
-cat("\nDiagnostic plots saved to:", file.path(import_dir, "07_ndvi_diagnostic.png"), "\n")
-
 #----------------------------------------------------------------------------
 
 ###################################
 # 7. Build analysis-ready panel   #
 ###################################
 
-# Monthly aggregation — average dekadal vim to month
-# Regression will merge onto MCHTrack monthly or daily panels
-# Dekadal vim preserved as separate dataset for higher-resolution specs
+# Monthly aggregation for merging onto MCHTrack visit panels; dekadal kept
+# separate for any higher-resolution use.
 
-# Monthly panel (for merging with monthly visit aggregates)
 ndvi_monthly <- ndvi_prog %>%
   group_by(state, pcode, lga_name, context, year_month, year, month_num) %>%
   summarise(
@@ -442,20 +350,16 @@ ndvi_monthly <- ndvi_prog %>%
     vim_max       = round(max(vim, na.rm = TRUE), 4),
     vim_min       = round(min(vim, na.rm = TRUE), 4),
     ag_season     = first(ag_season),
-    # Binary high-NDVI indicator — above LGA's own annual median
-    # Defined per-LGA to capture relative agricultural intensity
     .groups = "drop"
   ) %>%
   group_by(pcode) %>%
   mutate(
     vim_above_median = as.integer(vim_monthly > median(vim_monthly, na.rm = TRUE)),
-    # Centred for regression interpretability
     vim_c            = vim_monthly - mean(vim_monthly, na.rm = TRUE),
     viq_c            = viq_monthly - mean(viq_monthly, na.rm = TRUE)
   ) %>%
   ungroup()
 
-# Dekadal panel (for higher-resolution analysis)
 ndvi_dekadal <- ndvi_prog %>%
   select(state, pcode, lga_name, context, date, year_month,
          year, month_num, dekad_num, vim, viq, ag_season) %>%
@@ -467,24 +371,12 @@ ndvi_dekadal <- ndvi_prog %>%
   ) %>%
   ungroup()
 
-cat("\nMonthly panel rows:", nrow(ndvi_monthly), "\n")
-cat("Dekadal panel rows:", nrow(ndvi_dekadal), "\n")
-
-# Quick sanity check
-cat("\n--- Monthly panel sample (Ungogo + Gabasawa) ---\n")
-ndvi_monthly %>%
-  filter(lga_name %in% c("Ungogo", "Gabasawa")) %>%
-  select(lga_name, year_month, vim_monthly, viq_monthly,
-         vim_above_median, vim_c, ag_season) %>%
-  print(n = 20)
-
 #----------------------------------------------------------------------------
 
 ###################################
 # 8. Save import/diagnostic outputs#
 ###################################
 
-# Save cleaned full series (all LGAs, full date range)
 ndvi_all <- ndvi_clean %>%
   filter(include == TRUE) %>%
   select(state, pcode, lga_name, context, date, year_month,
@@ -498,39 +390,20 @@ write_csv(ndvi_monthly,  file.path(import_dir, "07_ndvi_monthly.csv"))
 write_csv(ndvi_dekadal,  file.path(import_dir, "07_ndvi_dekadal.csv"))
 write_csv(var_summary,   file.path(import_dir, "07_ndvi_variability_summary.csv"))
 
-cat("\nImport/diagnostic outputs saved to:", import_dir, "\n")
-cat("Files: 07_ndvi_monthly.rds/.csv, 07_ndvi_dekadal.rds/.csv,\n")
-cat("       07_ndvi_full_series.rds, 07_ndvi_variability_summary.csv\n")
-cat("       07_ndvi_diagnostic.png\n\n")
-
-cat("=== IMPORT/DIAGNOSTIC STAGE COMPLETE — REGRESSION ANALYSIS BELOW ===\n\n")
-
-
 #################################################################
 # REGRESSION ANALYSIS — NDVI and facility visits, Kano primary #
 #################################################################
 
-# NEW (13/7/2026). Mirrors 06_era5_analysis.R (heat) and
-# 02_chirps_import_analysis.R (precipitation) so all three weather/
-# vegetation exposures are directly comparable in the write-up. NDVI's
-# native resolution is dekadal, aggregated to monthly above (Section 7),
-# so this analysis runs at MONTHLY resolution only — there is no dekad-
-# derived "daily" spec here, unlike the precipitation script, because
-# facility-visit volume at dekad resolution is too sparse per LGA-dekad
-# to support a meaningful regression on top of an already-small monthly
-# panel (Kano target sites = 2 LGAs).
-
-cat("\n=== SECTION: NDVI REGRESSION ANALYSIS ===\n\n")
+# Mirrors 06_era5_analysis.R and 02_chirps_import_analysis.R so all three
+# exposures are comparable. NDVI's native resolution is dekadal, aggregated
+# to monthly above — no dekad-derived "daily" spec here, since visit volume
+# at dekad resolution is too sparse per LGA-dekad (Kano target = 2 LGAs).
 
 # 9. Load MCHTrack facility visits ------------------------------------------
 
 data_fv <- readRDS(file.path(mchtrack_dir, "01_facility_visits_clean.rds"))
 
-cat("Facility visits loaded:", nrow(data_fv), "rows\n")
-
-# Filter to Ungogo and Gabasawa, children only, Rimi excluded — same
-# target sites and window as 06_era5_analysis.R and
-# 02_chirps_import_analysis.R, so all three exposures are comparable.
+# Same target sites/window as 06_era5_analysis.R and 02_chirps_import_analysis.R
 data_fv_kano <- data_fv %>%
   filter(
     str_detect(tolower(lga_name), "ungogo|gabasawa"),
@@ -548,9 +421,6 @@ data_fv_kano <- data_fv %>%
     visit_date <= window_end
   )
 
-cat("Kano visits after filter:", nrow(data_fv_kano), "\n")
-cat("LGA names:", unique(data_fv_kano$lga_clean), "\n\n")
-
 # 10. Build monthly outcome panel (Kano) -------------------------------------
 
 visit_monthly_kano <- data_fv_kano %>%
@@ -562,8 +432,6 @@ visit_monthly_kano <- data_fv_kano %>%
     n_days            = n_distinct(visit_date),
     .groups = "drop"
   )
-
-cat("Monthly outcome panel rows (Kano):", nrow(visit_monthly_kano), "\n\n")
 
 #----------------------------------------------------------------------------
 
@@ -585,35 +453,14 @@ panel_ndvi_kano <- visit_monthly_kano %>%
   filter(!is.na(vim_c)) %>%
   arrange(lga_clean, year_month)
 
-cat("NDVI-visits panel rows (Kano, after join):", nrow(panel_ndvi_kano), "\n")
-
-if (nrow(panel_ndvi_kano) == 0) {
-  cat("WARNING: join produced zero rows. Check that ndvi_monthly's\n")
-  cat("year_month (Date, first-of-month) matches visit_monthly_kano's\n")
-  cat("year_month_date before proceeding.\n\n")
-}
-
-cat("--- Panel coverage by LGA ---\n")
-panel_ndvi_kano %>%
-  group_by(lga_clean) %>%
-  summarise(
-    n_months        = n(),
-    mean_visits     = round(mean(n_visits), 1),
-    mean_vim        = round(mean(vim_monthly, na.rm = TRUE), 3),
-    mean_viq        = round(mean(viq_monthly, na.rm = TRUE), 1),
-    .groups = "drop"
-  ) %>% print()
-cat("\n")
-
 #----------------------------------------------------------------------------
 
 ###################################
 # 12. Regression models (Kano)    #
 ###################################
 
-# Outcome: log(visits + 1), matching the heat and precipitation
-# specifications. Matches the W5/W6 slots referenced in
-# 09_visualization_markdown.Rmd's weather table (Monthly, LGA[+month-year] FE).
+# Outcome log(visits + 1), matching heat/precipitation. Matches the W5/W6
+# weather-table slots (Monthly, LGA[+month-year] FE).
 
 # N1: vim level, LGA FE only — matches W5 (NDVI seasonal level)
 n1 <- feols(log_visits ~ vim_c | lga_clean,
@@ -635,8 +482,6 @@ n4 <- feols(log_visits ~ vim_c | lga_clean + ym_factor,
             data    = panel_ndvi_kano,
             cluster = ~lga_clean)
 
-cat("=== REGRESSION RESULTS — NDVI (OLS), KANO PRIMARY ===\n\n")
-
 etable(n1, n2, n3, n4,
        title    = "NDVI and facility visits — monthly panel · Kano",
        digits   = 3,
@@ -655,17 +500,20 @@ modelsummary(
   output  = file.path(out_dir, "08_regression_ndvi_kano.txt")
 )
 
-cat("\nTable saved to:", file.path(out_dir, "08_regression_ndvi_kano.txt"), "\n\n")
-
 #----------------------------------------------------------------------------
 
 ###################################
-# 13. Negative binomial check     #
+# 13. Negative binomial — primary #
 ###################################
 
-# Same overdispersion caveat as heat and precipitation (Figure 2.3 in
-# 09_visualization_markdown.Rmd) — this is the same visit-count outcome,
-# just a different exposure joined onto it.
+# NB is the primary specification per Prabin's second-draft review (c84),
+# applied consistently with 02/06. OLS retained for comparison. Column
+# order flipped vs the previous draft — NB leads. 10_visualizations.R's
+# parser needs updating to match.
+# N1/N1_nb (vim level, LGA FE only) is the W5 headline spec and stays null
+# under both. Section 13b's N4 (vim_c + month-year FE, offset-adjusted)
+# comes back significant under both OLS and NB — flagged there, not
+# resolved here, since it's an interpretive call rather than a labelling one.
 
 n1_nb <- fenegbin(n_visits ~ vim_c | lga_clean,
                   data    = panel_ndvi_kano,
@@ -675,29 +523,22 @@ n2_nb <- fenegbin(n_visits ~ viq_c | lga_clean + ym_factor,
                   data    = panel_ndvi_kano,
                   cluster = ~lga_clean)
 
-cat("=== NEGATIVE BINOMIAL COMPARISON — NDVI ===\n\n")
-
-etable(n1, n1_nb, n2, n2_nb,
-       title  = "OLS (log-visits) vs negative binomial — NDVI exposure",
+etable(n1_nb, n1, n2_nb, n2,
+       title  = "Negative binomial (primary) vs OLS log-visits — NDVI exposure",
        digits = 4, se.below = TRUE)
 
 modelsummary(
   list(
-    "N1: OLS — vim level"       = n1,
-    "N1_nb: NB — vim level"     = n1_nb,
-    "N2: OLS — viq anomaly"     = n2,
-    "N2_nb: NB — viq anomaly"   = n2_nb
+    "N1_nb: NB — vim level (primary)"   = n1_nb,
+    "N1: OLS — vim level"               = n1,
+    "N2_nb: NB — viq anomaly (primary)" = n2_nb,
+    "N2: OLS — viq anomaly"             = n2
   ),
   stars   = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
   gof_map = c("nobs", "r.squared"),
-  title   = "NDVI — OLS vs negative binomial, Kano monthly panel",
+  title   = "NDVI — negative binomial (primary) vs OLS, Kano monthly panel",
   output  = file.path(out_dir, "08_regression_ndvi_nb_comparison.txt")
 )
-
-cat("\nTable saved to:", file.path(out_dir, "08_regression_ndvi_nb_comparison.txt"), "\n\n")
-cat("As with heat and precipitation, this settles agreement for NDVI only —\n")
-cat("the OLS-vs-NB primary-spec decision (c155) should be made once, with\n")
-cat("Prabin, and applied consistently to all three weather variables.\n\n")
 
 #----------------------------------------------------------------------------
 
@@ -706,43 +547,26 @@ cat("Prabin, and applied consistently to all three weather variables.\n\n")
 # (Prabin Dahal, 15/7/2026 review)          #
 #############################################
 
-# Same two additions as 02_chirps_import_analysis.R Section 12b and
-# 06_era5_analysis.R Section 5c — see those files' comments for the full
-# reasoning. Summary:
-# 1. Offset (c153/c152): no population denominator means this model
-#    explains raw visit COUNTS, not a RATE. enrolled_children (from
-#    01_mchtrack_import.R) is the best available proxy this pipeline has —
-#    a cumulative-registration stock, not a true point-in-time eligible
-#    count. Treat as a check, not a finished answer.
-# 2. Spline (c154): vim_c modelled linearly may miss a threshold or
-#    non-monotonic relationship (e.g. an agricultural-season effect that
-#    isn't a straight line through the year).
+# Same additions as 02 Section 12 and 06 Section 5c. Applied to N4 (vim_c,
+# +month-year FE) and N2 (viq_c, +month-year FE) — the richest-FE specs,
+# not N1/N3, matching heat's D3/D4 pattern. Kano-primary panel only; the
+# Katsina check in Section 14 is untouched.
+# Saved to its own file — 10_visualizations.R reads fixed columns from
+# 08_regression_ndvi_kano.txt and 08_regression_ndvi_nb_comparison.txt.
 #
-# Applied to N4 (vim_c, LGA + month-year FE) and N2 (viq_c, LGA + month-year
-# FE) — the two richest-FE specs above — not N1/N3, to match the pattern
-# used for heat's D3/D4. Kano-primary panel only, same as Sections 9-13;
-# the Katsina sensitivity check in Section 14 below is left untouched.
-#
-# New models go into their own output file, NOT into 08_regression_ndvi_kano.txt
-# or 08_regression_ndvi_nb_comparison.txt — 10_visualizations.R reads
-# specific columns from both (col = 1/2 from the first, col = 1/2 from the
-# second). Changing either file's model list or order would silently break
-# that parsing.
-
-cat("=== EXPOSURE/OFFSET + SPLINE ROBUSTNESS — NDVI ===\n\n")
+# FLAG: N4_off and N4_nb_off (vim_c, offset-adjusted) both come back
+# significant here, unlike N1/N1_nb above and unlike heat/precipitation's
+# offset checks. This sits underneath Table 3.3's NDVI row and hasn't been
+# resolved — worth a decision on whether it's a genuine finding or an
+# artefact of the small (~40 LGA-month) panel before it goes further than
+# a robustness footnote.
 
 lga_month_path <- file.path(mchtrack_dir, "01_panel_lga_month.rds")
 
-if (!file.exists(lga_month_path)) {
-  cat("MISSING INPUT:", lga_month_path, "\n")
-  cat("Skipping offset/spline robustness section — rerun 01_mchtrack_import.R first.\n\n")
-} else {
+if (file.exists(lga_month_path)) {
   
-  # 01_panel_lga_month.rds's year_month is a character "%Y-%m" string.
-  # panel_ndvi_kano's year_month is a <date> (from year_month_date via
-  # floor_date() in Section 10) — same mismatch already hit and fixed in
-  # 06_era5_analysis.R, applied proactively here via a derived character
-  # key on both sides rather than assuming the types already match.
+  # enrolled_lookup's year_month is character "%Y-%m"; panel_ndvi_kano's is
+  # a <date>. Join on a derived character key on both sides.
   enrolled_lookup <- readRDS(lga_month_path) %>%
     filter(state == "Kano") %>%
     mutate(
@@ -752,25 +576,13 @@ if (!file.exists(lga_month_path)) {
     filter(lga_clean %in% c("Ungogo", "Gabasawa")) %>%
     distinct(lga_clean, ym_key, enrolled_children)
   
-  # Joined onto a COPY of panel_ndvi_kano, not the original — the original
-  # (and 08_panel_ndvi_kano.rds/.csv saved in Section 16) stays exactly as
-  # it was before this section.
+  # Joined onto a copy — panel_ndvi_kano and its Section 16 exports stay untouched.
   panel_ndvi_off <- panel_ndvi_kano %>%
     mutate(ym_key = format(year_month, "%Y-%m")) %>%
     left_join(enrolled_lookup, by = c("lga_clean", "ym_key"))
   
-  n_missing_exposure <- sum(is.na(panel_ndvi_off$enrolled_children) | panel_ndvi_off$enrolled_children <= 0)
-  cat("Monthly rows missing a usable enrolled_children value:", n_missing_exposure,
-      "of", nrow(panel_ndvi_off), "\n")
-  if (n_missing_exposure > 0) {
-    cat("These rows are dropped from the offset models below (log(0) or log(NA)\n")
-    cat("is undefined) — check enrolled_lookup coverage if this number is large.\n")
-  }
-  cat("\n")
-  
   panel_ndvi_off_valid <- panel_ndvi_off %>% filter(!is.na(enrolled_children), enrolled_children > 0)
   
-  # N4_off / N2_off: same FE structure as N4/N2 above, now with an offset
   n4_off <- feols(log_visits ~ vim_c | lga_clean + ym_factor,
                   data    = panel_ndvi_off_valid,
                   offset  = ~log(enrolled_children),
@@ -781,20 +593,17 @@ if (!file.exists(lga_month_path)) {
                   offset  = ~log(enrolled_children),
                   cluster = ~lga_clean)
   
-  # NB counterpart with offset — vim only, matching n1_nb's exposure choice
   n4_nb_off <- fenegbin(n_visits ~ vim_c | lga_clean + ym_factor,
                         data    = panel_ndvi_off_valid,
                         offset  = ~log(enrolled_children),
                         cluster = ~lga_clean)
   
-  # Spline — vim_c only, no offset (isolates the linearity question from
-  # the exposure question). df kept small given this is a monthly panel
-  # with a limited number of LGA-months.
+  # vim_c only, no offset — isolates linearity from the exposure question.
+  # df kept small given the limited number of LGA-months.
   n4_spline <- feols(log_visits ~ splines::ns(vim_c, df = 3) | lga_clean + ym_factor,
                      data    = panel_ndvi_kano,
                      cluster = ~lga_clean)
   
-  cat("--- N4/N2 (original) vs N4_off/N2_off (offset) vs N4_nb_off vs N4_spline ---\n\n")
   etable(n4, n4_off, n4_nb_off, n2, n2_off, n4_spline,
          title    = "NDVI robustness — offset and spline specifications",
          digits   = 4,
@@ -812,12 +621,6 @@ if (!file.exists(lga_month_path)) {
     title   = "NDVI — exposure-offset and spline robustness (Prabin, 15/7/2026)",
     output  = file.path(out_dir, "08_regression_ndvi_robustness_prabin.txt")
   )
-  
-  cat("\nTable saved to:", file.path(out_dir, "08_regression_ndvi_robustness_prabin.txt"), "\n")
-  cat("Compare vim_c / viq_c coefficient sign, magnitude and significance\n")
-  cat("across all columns against the original N4/N2 results in\n")
-  cat("08_regression_ndvi_kano.txt before concluding the offset or the\n")
-  cat("spline changes anything for this variable.\n\n")
 }
 
 #----------------------------------------------------------------------------
@@ -826,23 +629,13 @@ if (!file.exists(lga_month_path)) {
 # 14. Katsina sensitivity check — NOT the primary analysis   #
 ##############################################################
 
-# Per the original decision log for this script (see historical note in
-# Section 8 above) and per direct confirmation from Khem (13/7/2026):
-# facility visits data for Katsina has known duplication issues that
-# emerged partway through the placement, so Kano is the only state
-# reliable across the FULL study period. RQ1 and RQ2 (zero-dose
-# predictors, recovery) legitimately pool both states because those
-# analyses do not depend on daily visit-count volume the way this NDVI-
-# visits regression does. This weather analysis (RQ3) is Kano-primary for
-# that reason, and Katsina is reported here only as an explicit,
-# clearly-labelled sensitivity check — NOT pooled into the primary N1-N4
-# results above, and NOT used to justify any claim about NDVI's effect in
-# Katsina specifically.
-
-cat("=== SECTION 14: KATSINA SENSITIVITY CHECK (NOT PRIMARY) ===\n\n")
-cat("WARNING: Katsina facility-visits data has known duplication issues.\n")
-cat("The results below are reported for transparency only and should be\n")
-cat("flagged explicitly as a sensitivity check wherever they are cited.\n\n")
+# Katsina facility-visits data has known duplication issues that emerged
+# partway through the placement, so Kano is the only state reliable across
+# the full study period for a daily/monthly visit-count outcome. RQ1/RQ2
+# pool both states since those analyses don't depend on visit-count volume
+# the way this one does. Katsina is reported here only as an explicit
+# sensitivity check — not pooled into N1-N4, not used to claim anything
+# about NDVI's effect in Katsina specifically.
 
 data_fv_katsina <- data_fv %>%
   filter(
@@ -874,15 +667,11 @@ panel_ndvi_katsina <- visit_monthly_katsina %>%
   mutate(log_visits = log(n_visits + 1)) %>%
   filter(!is.na(vim_c))
 
-cat("Katsina sensitivity panel rows:", nrow(panel_ndvi_katsina), "\n")
-cat("Katsina LGAs represented:", n_distinct(panel_ndvi_katsina$lga_clean), "\n\n")
-
 if (nrow(panel_ndvi_katsina) >= 20) {
   n1_katsina <- feols(log_visits ~ vim_c | lga_clean,
                       data    = panel_ndvi_katsina,
                       cluster = ~lga_clean)
   
-  cat("=== KATSINA SENSITIVITY RESULT (vim level, LGA FE) ===\n\n")
   etable(n1, n1_katsina,
          title    = "Kano primary vs Katsina sensitivity — NDVI",
          headers  = c("Kano (primary)", "Katsina (sensitivity)"),
@@ -895,12 +684,6 @@ if (nrow(panel_ndvi_katsina) >= 20) {
     title   = "Table 3.3-adjacent: Kano primary vs Katsina sensitivity (NDVI)",
     output  = file.path(out_dir, "08_regression_ndvi_katsina_sensitivity.txt")
   )
-  cat("\nTable saved to:",
-      file.path(out_dir, "08_regression_ndvi_katsina_sensitivity.txt"), "\n\n")
-} else {
-  cat("Fewer than 20 Katsina LGA-months available — skipping the sensitivity\n")
-  cat("regression as underpowered. Reconsider once more Katsina months are\n")
-  cat("confirmed reliable.\n\n")
 }
 
 #----------------------------------------------------------------------------
@@ -910,8 +693,6 @@ if (nrow(panel_ndvi_katsina) >= 20) {
 ###################################
 
 pal_kano <- c("Ungogo" = "#D84A38", "Gabasawa" = "#1D6FA4")
-
-# -- Plot A: vim vs log visits, Kano target LGAs -------------------------
 
 pA <- ggplot(panel_ndvi_kano, aes(x = vim_c, y = log_visits, colour = lga_clean)) +
   geom_point(size = 2.5, alpha = 0.7) +
@@ -926,8 +707,6 @@ pA <- ggplot(panel_ndvi_kano, aes(x = vim_c, y = log_visits, colour = lga_clean)
   ) +
   theme_minimal(base_size = 12) +
   theme(plot.title = element_text(face = "bold"), legend.position = "top")
-
-# -- Plot B: NDVI and visits time series, dual axis style (faceted) ------
 
 pB_ndvi <- ggplot(panel_ndvi_kano, aes(x = year_month, y = vim_monthly, colour = lga_clean)) +
   geom_line(linewidth = 1) + geom_point(size = 2) +
@@ -961,8 +740,6 @@ ggsave(
   width    = 10, height = 12, dpi = 300
 )
 
-cat("Regression plots saved to:", out_dir, "\n\n")
-
 #----------------------------------------------------------------------------
 
 ###################################
@@ -976,23 +753,5 @@ if (exists("panel_ndvi_katsina") && nrow(panel_ndvi_katsina) > 0) {
   saveRDS(panel_ndvi_katsina, file.path(out_dir, "08_panel_ndvi_katsina_sensitivity.rds"))
   write_csv(panel_ndvi_katsina, file.path(out_dir, "08_panel_ndvi_katsina_sensitivity.csv"))
 }
-
-cat("All analysis outputs saved to:", out_dir, "\n")
-cat("  08_regression_ndvi_kano.txt\n")
-cat("  08_regression_ndvi_nb_comparison.txt\n")
-cat("  08_regression_ndvi_robustness_prabin.txt   <- offset + spline, see Section 13b\n")
-cat("  08_regression_ndvi_katsina_sensitivity.txt   (if Katsina panel >= 20 rows)\n")
-cat("  08_ndvi_visits_kano.png\n")
-cat("  08_panel_ndvi_kano.rds / .csv\n")
-cat("  08_panel_ndvi_katsina_sensitivity.rds / .csv (if built)\n\n")
-
-cat("--- Script complete ---\n")
-cat("This file now contains the regression analysis its filename has always\n")
-cat("implied. 07_ndvi_import.R remains the import-only version — no need to\n")
-cat("keep 8_ndvi_analysis.R (the old duplicate) once this file replaces it.\n")
-cat("Reminder: enrolled_children (Section 13b) is a cumulative-registration\n")
-cat("stock, not a true point-in-time exposure count — treat the offset models\n")
-cat("as the best available check with this pipeline's current data, not a\n")
-cat("finished answer to Prabin's exposure-term comment.\n")
 
 #--------------------------(END)------------------------------#

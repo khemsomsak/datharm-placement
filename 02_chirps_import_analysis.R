@@ -1,19 +1,15 @@
 ########################################
 #  02_chirps_import_analysis.R         #
 #  Created: 13/5/2026                  #
-#  Updated: 15/7/2026                  #
+#  Updated: 24/7/2026                  #
 ########################################
-
-# Reset environment -----------------------------------------------------
 
 rm(list = ls())
 setwd("C:/Users/HP/Documents/GitHub/datharm-placement")
 
-# Turn off scientific notation globally
 options(scipen = 999)
 Sys.setlocale("LC_TIME", "English")
 
-#Set link shortcuts
 home         <- "C:/Users/HP/Documents/GitHub/datharm-placement"
 raw_dir      <- file.path(home, "02_data/03_external")
 mchtrack_dir <- file.path(home, "03_output/01_mchtrack_data")
@@ -22,12 +18,10 @@ out_dir      <- file.path(home, "03_output/02_chirps_analysis")
 dir.create(import_dir, showWarnings = FALSE, recursive = TRUE)
 dir.create(out_dir,    showWarnings = FALSE, recursive = TRUE)
 
-
 library(sf)
 library(terra)
 library(chirps)
 
-#Routine Packages
 library(janitor)
 library(tidyverse)
 library(dplyr)
@@ -37,7 +31,7 @@ library(readr)
 library(readxl)
 library(lubridate)
 library(fixest)        # feols() / fenegbin() for panel regression
-library(modelsummary)  # clean regression output tables
+library(modelsummary)
 library(patchwork)
 library(scales)
 
@@ -47,18 +41,17 @@ library(scales)
 # Import Database #
 ###################
 
-# 1. Import rainfall CHIRPS dataset --------------------------------------------
+# 1. Import rainfall CHIRPS dataset -----------------------------------------
 
 data_file <- file.path(raw_dir, "nga-rainfall-subnat-5ytd.csv")
 data_raw  <- read_csv(data_file, show_col_types = FALSE) %>%
   clean_names()
 
-
 ############
 # Cleaning #
 ############
 
-# 2. Filter the imported data to only LGAs in Katsina and Kano -----------------
+# 2. Filter to Kano and Katsina LGAs -----------------------------------------
 
 data_kk <- data_raw %>%
   filter(
@@ -66,11 +59,7 @@ data_kk <- data_raw %>%
     str_starts(pcode, "NG019") | str_starts(pcode, "NG020")
   )
 
-#Count number of rows and distinct LGA count
-nrow(data_kk)
-n_distinct(data_kk$pcode)
-
-# 3. Aggregate from dekadal to monthly averages --------------------------------
+# 3. Aggregate dekadal to monthly --------------------------------------------
 
 data_kk_monthly <- data_kk %>%
   mutate(
@@ -78,19 +67,16 @@ data_kk_monthly <- data_kk %>%
   ) %>%
   group_by(pcode, year_month) %>%
   summarise(
-    dekads_present          = n(),                                      # should be 3; flag if not
-    precip_actual_mm        = mean(as.numeric(r1h),     na.rm = TRUE),  # 1-month actual rainfall mm
-    precip_longterm_avg_mm  = mean(as.numeric(r1h_avg), na.rm = TRUE),  # long-term average mm
-    precip_anomaly_pct      = mean(as.numeric(r1q),     na.rm = TRUE),  # 1-month anomaly as % of LTA
-    # absolute mm deviation from long-term average — supervisor suggestion
+    dekads_present          = n(),
+    precip_actual_mm        = mean(as.numeric(r1h),     na.rm = TRUE),
+    precip_longterm_avg_mm  = mean(as.numeric(r1h_avg), na.rm = TRUE),
+    precip_anomaly_pct      = mean(as.numeric(r1q),     na.rm = TRUE),
     precip_abs_dev_mm       = mean(as.numeric(r1h) - as.numeric(r1h_avg), na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  #Filter to the program date range (MCHTrack data starts Aug 2024)
-  filter(year_month >= "2024-08")
+  filter(year_month >= "2024-08")  # MCHTrack starts Aug 2024
 
-# Dekadal dataset — keep one row per pcode × dekad, no aggregation needed
-# dekad_id: YYYY-MM-D1 / D2 / D3 based on day of month
+# Dekadal dataset — one row per pcode x dekad, no aggregation
 data_kk_dekadal <- data_kk %>%
   mutate(
     date_parsed = as.Date(date),
@@ -102,28 +88,15 @@ data_kk_dekadal <- data_kk %>%
     year_month        = format(date_parsed, "%Y-%m"),
     dekad_id          = paste0(year_month, "-", dekad_num),
     precip_actual_mm  = as.numeric(r1h),
-    # absolute mm deviation from long-term dekadal average
     precip_abs_dev_mm = as.numeric(r1h) - as.numeric(r1h_avg),
-    # keep anomaly pct for comparison
     precip_anomaly_pct = as.numeric(r1q)
   ) %>%
   filter(date_parsed >= as.Date("2024-08-01")) %>%
   select(pcode, year_month, dekad_id, dekad_num,
          precip_actual_mm, precip_abs_dev_mm, precip_anomaly_pct)
 
-# Flag any months where we have fewer than 3 dekads (incomplete months)
-incomplete <- data_kk_monthly %>% filter(dekads_present < 3)
-if (nrow(incomplete) > 0) {
-  cat("WARNING:", nrow(incomplete), "LGA-months have fewer than 3 dekads — check dates\n")
-  print(incomplete)
-} else {
-  cat("All LGA-months have complete dekadal coverage.\n")
-}
+# 4. LGA name lookup ----------------------------------------------------
 
-
-# 4. Add the LGA name variable ----------
-
-#Manually create look up table of pcode and LGA names
 lga_lookup <- tribble(
   ~pcode,     ~lga_name_mchtrack,
   # ── KANO ──
@@ -194,27 +167,10 @@ lga_lookup <- tribble(
   "NG020044",  "Wudil LGA"
 )
 
-# ⚠ PCODE VERIFICATION FLAG — DO NOT SKIP -------------------------------
-# This lookup assigns "Ungogo LGA" to NG020038, inside the Katsina block
-# (pcodes starting NG020 are coded state = "Katsina" below). Ungogo, Kiru,
-# Nassarawa, Madobi, Shanono, Warawa and Wudil (NG020038-044) are all real
-# Kano LGA names, not Katsina — this looks like a copy/paste continuation
-# error when the table was built, not a deliberate Katsina LGA list.
-#
-# 08_ndvi_analysis.R's lga_ref table (sourced, per its own comment, from
-# OCHA Nigeria administrative boundaries) assigns:
-#   Ungogo   = NG019013 (Kano)
-#   Gabasawa = NG019006 (Kano)
-# which conflicts with THIS file's own assignment of NG019013 = Gabasawa
-# and NG019006 = Bunkure. That is three different pcode claims across the
-# codebase for the same two target LGAs.
-#
-# The override below matches the OCHA-cited reference in 08_ndvi_analysis.R,
-# since it is the only one with an explicit source. VERIFY AGAINST THE
-# ACTUAL OCHA SHAPEFILE BEFORE TREATING ANY UNGOGO/GABASAWA PRECIPITATION
-# RESULT BELOW AS FINAL — this override is a documented best guess, not a
-# confirmed correction.
-
+# NG020038 "Ungogo LGA" is a copy-paste error — Ungogo and Gabasawa are Kano
+# LGAs, not Katsina. Override below matches 08_ndvi_analysis.R's OCHA-sourced
+# pcodes (NG019013 = Ungogo, NG019006 = Gabasawa); not independently verified
+# against the shapefile, so treat as a documented best guess.
 lga_lookup <- lga_lookup %>%
   mutate(
     lga_name_mchtrack = case_when(
@@ -223,14 +179,8 @@ lga_lookup <- lga_lookup %>%
       TRUE                 ~ lga_name_mchtrack
     )
   ) %>%
-  filter(pcode != "NG020038")   # drop the erroneous Katsina-block "Ungogo LGA" row
+  filter(pcode != "NG020038")
 
-cat("PCODE OVERRIDE APPLIED — verify against OCHA shapefile before final use:\n")
-cat("  NG019013 -> Ungogo LGA (Kano)\n")
-cat("  NG019006 -> Gabasawa LGA (Kano)\n")
-cat("  Removed erroneous NG020038 'Ungogo LGA' entry from Katsina block\n\n")
-
-#Join lookup LGA table onto data
 data_final <- data_kk_monthly %>%
   left_join(lga_lookup, by = "pcode") %>%
   mutate(
@@ -252,7 +202,6 @@ data_final <- data_kk_monthly %>%
   ) %>%
   arrange(state, lga_pcode, year_month)
 
-# Build dekadal final: join LGA names onto dekadal data
 data_final_dekadal <- data_kk_dekadal %>%
   left_join(lga_lookup, by = "pcode") %>%
   mutate(
@@ -270,24 +219,8 @@ data_final_dekadal <- data_kk_dekadal %>%
   ) %>%
   arrange(state, lga_pcode, dekad_id)
 
-
-#Check for any PCODEs that didn't match the lookup
-unmatched <- data_final %>% filter(is.na(lga_name_mchtrack))
-if (nrow(unmatched) > 0) {
-  cat("WARNING:", n_distinct(unmatched$lga_pcode), "PCODEs had no name match:\n")
-  print(distinct(unmatched, lga_pcode))
-} else {
-  cat("All PCODEs matched successfully.\n")
-}
-
-
-# Save as native R object instead of CSV
 saveRDS(data_final,         file.path(import_dir, "02_chirps_data_kk_monthly.rds"))
 saveRDS(data_final_dekadal, file.path(import_dir, "02_chirps_data_kk_dekadal.rds"))
-
-
-# Preview
-print(data_final)
 
 #----------------------------------------------------------------------------
 
@@ -295,27 +228,16 @@ print(data_final)
 # REGRESSION ANALYSIS — Precipitation, Kano   #
 ###############################################
 
-# Mirrors the structure of 06_era5_analysis.R (heat) so the two exposures
-# are directly comparable in the write-up. Two resolutions are built:
-#   - Monthly panel: matches CHIRPS's native reporting resolution.
-#   - "Daily" panel: each visit day is joined to the precipitation value of
-#     the 10-day dekad it falls in (same dekad logic as the cleaning step
-#     above). This is a step function, not a true daily series — CHIRPS
-#     here only resolves to dekads, so within a dekad every day carries an
-#     identical precipitation value. State this explicitly in the write-up;
-#     it is a genuine resolution limit, not a coding shortcut.
+# Mirrors 06_era5_analysis.R's structure so heat and precipitation are
+# directly comparable. "Daily" panel maps each visit day to the 10-day
+# dekad it falls in — a step function, not a true daily series, since
+# CHIRPS only resolves to dekads. Genuine resolution limit, not a shortcut.
 
-cat("\n=== SECTION: PRECIPITATION REGRESSION ANALYSIS ===\n\n")
-
-# 5. Load MCHTrack facility visits ----------------------------------------
+# 5. Load MCHTrack facility visits -------------------------------------------
 
 data_fv <- readRDS(file.path(mchtrack_dir, "01_facility_visits_clean.rds"))
 
-cat("Facility visits loaded:", nrow(data_fv), "rows\n")
-
-# Filter to Ungogo and Gabasawa, children only, Rimi excluded — same target
-# sites and window as 06_era5_analysis.R, so heat and precipitation results
-# are directly comparable.
+# Same target sites/window as 06_era5_analysis.R for comparability
 data_fv_kano <- data_fv %>%
   filter(
     str_detect(tolower(lga_name), "ungogo|gabasawa"),
@@ -333,12 +255,9 @@ data_fv_kano <- data_fv %>%
     visit_date <= as.Date("2026-03-31")
   )
 
-cat("Kano visits after filter:", nrow(data_fv_kano), "\n")
-cat("LGA names:", unique(data_fv_kano$lga_clean), "\n\n")
-
 #----------------------------------------------------------------------------
 
-# 6. Build daily outcome panel ---------------------------------------------
+# 6. Build daily outcome panel -----------------------------------------------
 
 visit_daily <- data_fv_kano %>%
   group_by(lga_clean, visit_date) %>%
@@ -348,7 +267,6 @@ visit_daily <- data_fv_kano %>%
     .groups = "drop"
   )
 
-# Full date spine so zero-visit days are not dropped
 date_spine <- expand_grid(
   lga_clean  = unique(visit_daily$lga_clean),
   visit_date = seq(as.Date("2024-08-01"),
@@ -360,10 +278,7 @@ visit_daily <- date_spine %>%
   left_join(visit_daily, by = c("lga_clean", "visit_date")) %>%
   mutate(n_visits = replace_na(n_visits, 0))
 
-cat("Daily outcome panel rows:", nrow(visit_daily), "\n")
-cat("Zero-visit days:", sum(visit_daily$n_visits == 0), "\n\n")
-
-# 7. Build monthly outcome panel --------------------------------------------
+# 7. Build monthly outcome panel ----------------------------------------------
 
 visit_monthly <- visit_daily %>%
   mutate(year_month = format(visit_date, "%Y-%m")) %>%
@@ -375,13 +290,10 @@ visit_monthly <- visit_daily %>%
     .groups = "drop"
   )
 
-cat("Monthly outcome panel rows:", nrow(visit_monthly), "\n\n")
-
 #----------------------------------------------------------------------------
 
-# 8. Prepare CHIRPS series for join -----------------------------------------
+# 8. Prepare CHIRPS series for join -------------------------------------------
 
-# lga_clean naming must match visit data (Title Case, no "LGA" suffix)
 precip_dekadal <- data_final_dekadal %>%
   filter(state == "Kano", lga_name_mchtrack %in% c("Ungogo LGA", "Gabasawa LGA")) %>%
   mutate(
@@ -398,18 +310,9 @@ precip_monthly <- data_final %>%
   select(lga_clean, year_month, precip_actual_mm, precip_longterm_avg_mm,
          precip_anomaly_pct, precip_abs_dev_mm)
 
-cat("Precipitation dekadal rows (target LGAs):", nrow(precip_dekadal), "\n")
-cat("Precipitation monthly rows (target LGAs):", nrow(precip_monthly), "\n\n")
-
-if (nrow(precip_dekadal) == 0 || nrow(precip_monthly) == 0) {
-  cat("WARNING: no precipitation rows matched Ungogo/Gabasawa after the pcode\n")
-  cat("override above. Check the override against the raw CHIRPS pcode set\n")
-  cat("before proceeding — the join below will silently produce an empty panel.\n\n")
-}
-
 #----------------------------------------------------------------------------
 
-# 9. Build "daily" panel — visit day mapped to its containing dekad --------
+# 9. Build "daily" panel — visit day mapped to its containing dekad ----------
 
 panel_daily <- visit_daily %>%
   mutate(
@@ -435,10 +338,7 @@ panel_daily <- visit_daily %>%
   filter(!is.na(precip_anomaly_pct)) %>%
   arrange(lga_clean, visit_date)
 
-cat("Daily precip-visit panel rows after join:", nrow(panel_daily), "\n")
-cat("Rows with precip matched:", sum(!is.na(panel_daily$precip_anomaly_pct)), "\n\n")
-
-# 10. Build monthly panel ----------------------------------------------------
+# 10. Build monthly panel ------------------------------------------------------
 
 panel_monthly <- visit_monthly %>%
   left_join(precip_monthly, by = c("lga_clean", "year_month")) %>%
@@ -448,57 +348,36 @@ panel_monthly <- visit_monthly %>%
   filter(!is.na(precip_anomaly_pct)) %>%
   arrange(lga_clean, year_month)
 
-cat("Monthly precip-visit panel rows after join:", nrow(panel_monthly), "\n\n")
-
-#Validate: panel coverage summary table ----
-cat("--- Panel coverage by LGA ---\n")
-panel_daily %>%
-  group_by(lga_clean) %>%
-  summarise(
-    n_days            = n(),
-    mean_visits       = round(mean(n_visits), 1),
-    mean_precip_mm    = round(mean(precip_actual_mm, na.rm = TRUE), 1),
-    mean_anomaly_pct  = round(mean(precip_anomaly_pct, na.rm = TRUE), 1),
-    .groups = "drop"
-  ) %>% print()
-cat("\n")
-
 #----------------------------------------------------------------------------
 
 ###################################
 # 11. Regression models           #
 ###################################
 
-# Outcome: log(visits + 1), matching the heat and NDVI specifications
-# Monthly spec = W1 slot (small-N panel, LGA FE only)
-# Dekad-derived daily spec = W2 slot (LGA + DOW + month-year FE)
+# Outcome log(visits + 1), matching heat/NDVI. Monthly = W1 slot (LGA FE
+# only), dekad-derived daily = W2 slot (LGA + DOW + month-year FE).
 
-# P1: Monthly, LGA FE only — matches heat's D1-equivalent
 p1 <- feols(log_visits ~ precip_anomaly_pct | lga_clean,
             data    = panel_monthly,
             cluster = ~lga_clean)
 
-# P2: Daily (dekad-derived), LGA FE only — naive baseline
 p2 <- feols(log_visits ~ precip_anomaly_pct | lga_clean,
             data    = panel_daily,
             cluster = ~lga_clean)
 
-# P3: + day-of-week FE
 p3 <- feols(log_visits ~ precip_anomaly_pct | lga_clean + dow_num,
             data    = panel_daily,
             cluster = ~lga_clean)
 
-# P4: + month-year FE — primary daily specification
+# P4: reference daily FE structure. The NB version below (Section 12) is
+# the primary specification used in the write-up per Prabin's review.
 p4 <- feols(log_visits ~ precip_anomaly_pct | lga_clean + dow_num + ym_factor,
             data    = panel_daily,
             cluster = ~lga_clean)
 
-# P5: Absolute mm deviation — alternative exposure measure
 p5 <- feols(log_visits ~ precip_abs_dev_mm | lga_clean + dow_num + ym_factor,
             data    = panel_daily,
             cluster = ~lga_clean)
-
-cat("=== REGRESSION RESULTS — PRECIPITATION (OLS) ===\n\n")
 
 etable(p1, p2, p3, p4, p5,
        title    = "CHIRPS precipitation and facility visits · Kano",
@@ -519,36 +398,34 @@ modelsummary(
   output  = file.path(out_dir, "02_regression_precip_visits.txt")
 )
 
-cat("\nTable saved to:", file.path(out_dir, "02_regression_precip_visits.txt"), "\n\n")
-
 #----------------------------------------------------------------------------
 
 ###################################
-# 12. Negative binomial check     #
+# 12. Negative binomial — primary #
 ###################################
 
-# Theoretically preferred given the overdispersion already confirmed for
-# this outcome in 06_era5_analysis.R (Figure 2.3) — same visit-count
-# outcome, same overdispersion, so the same caveat applies here.
+# NB is the primary specification per Prabin's review: avoids the log(+1)
+# patch, can't predict negative counts, and fits overdispersed count data
+# (confirmed in 06_era5_analysis.R, Figure 2.3) better than OLS residuals
+# can. OLS retained alongside for comparison.
+# Column order flipped vs the previous draft — NB is now col 1, OLS col 2.
+# 10_visualizations.R's parser needs updating to match.
 
 p4_nb <- fenegbin(n_visits ~ precip_anomaly_pct | lga_clean + dow_num + ym_factor,
                   data    = panel_daily,
                   cluster = ~lga_clean)
 
-cat("=== NEGATIVE BINOMIAL CHECK — PRECIPITATION ===\n\n")
-etable(p4, p4_nb,
-       title  = "OLS (log-visits) vs negative binomial — precipitation",
+etable(p4_nb, p4,
+       title  = "Negative binomial (primary) vs OLS log-visits — precipitation",
        digits = 4, se.below = TRUE)
 
 modelsummary(
-  list("OLS — log(visits + 1)" = p4, "Negative binomial — counts" = p4_nb),
+  list("Negative binomial — counts (primary)" = p4_nb, "OLS — log(visits + 1)" = p4),
   stars   = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
   gof_map = c("nobs", "r.squared"),
-  title   = "Precipitation — OLS vs negative binomial",
+  title   = "Precipitation — negative binomial (primary) vs OLS",
   output  = file.path(out_dir, "02_regression_precip_nb_comparison.txt")
 )
-
-cat("\nTable saved to:", file.path(out_dir, "02_regression_precip_nb_comparison.txt"), "\n\n")
 
 #----------------------------------------------------------------------------
 
@@ -557,39 +434,17 @@ cat("\nTable saved to:", file.path(out_dir, "02_regression_precip_nb_comparison.
 # (Prabin Dahal, 15/7/2026 review)          #
 #############################################
 
-# Two of Prabin's comments, added here as NEW models alongside the existing
-# ones above, not replacements:
-#
-# 1. Offset/exposure term (c153/c152 in the reviewed draft): without a
-#    population denominator, this model explains raw visit COUNTS, not a
-#    visit RATE — Prabin's point is that "high temp/rainfall associated
-#    with increased visits" is not a claim this model can support as
-#    currently specified. enrolled_children (built in 01_mchtrack_import.R,
-#    Section 7) is the only denominator this pipeline currently produces —
-#    it is CUMULATIVE registered children per LGA up to that month, a
-#    stock, not a true point-in-time count of currently-eligible children.
-#    Treat this as the best available proxy, not a perfect exposure
-#    measure — flag this caveat wherever the offset models are cited.
-#
-# 2. Spline (c154): linear precip_anomaly_pct may miss a threshold or
-#    non-monotonic relationship. Added as ns(precip_anomaly_pct, df = 3)
-#    on the same primary daily specification (P4).
-#
-# Deliberately NOT written into 02_regression_precip_visits.txt or
-# 02_regression_precip_nb_comparison.txt above — 10_visualizations.R reads
-# specific column positions from both of those files (col = 1 and col = 4
-# for the visits table, col = 1/2 for the NB table). Changing their model
-# list or column order would silently break that parsing. These new models
-# go into their own output file instead.
-
-cat("=== EXPOSURE/OFFSET + SPLINE ROBUSTNESS — PRECIPITATION ===\n\n")
+# Offset uses enrolled_children (01_mchtrack_import.R, Section 7) as the
+# exposure denominator — a cumulative registration stock, not a true
+# point-in-time count. Best available proxy, not a perfect measure.
+# Spline tests for a non-linear precip_anomaly_pct relationship.
+# Saved to its own file — 10_visualizations.R reads fixed column positions
+# from 02_regression_precip_visits.txt and 02_regression_precip_nb_comparison.txt,
+# so these models stay out of both.
 
 lga_month_path <- file.path(mchtrack_dir, "01_panel_lga_month.rds")
 
-if (!file.exists(lga_month_path)) {
-  cat("MISSING INPUT:", lga_month_path, "\n")
-  cat("Skipping offset/spline robustness section — rerun 01_mchtrack_import.R first.\n\n")
-} else {
+if (file.exists(lga_month_path)) {
   
   enrolled_lookup <- readRDS(lga_month_path) %>%
     filter(state == "Kano") %>%
@@ -599,30 +454,17 @@ if (!file.exists(lga_month_path)) {
     filter(lga_clean %in% c("Ungogo", "Gabasawa")) %>%
     distinct(lga_clean, year_month, enrolled_children)
   
-  # Joined onto COPIES of the panels, not the originals — panel_daily and
-  # panel_monthly (and the .rds/.csv exports built from them in Section 14)
-  # stay exactly as they were before this section, unaffected by whether
-  # this join works cleanly or not.
+  # Joined onto copies — panel_daily/panel_monthly and their Section 14
+  # exports stay untouched regardless of how this join turns out.
   panel_daily_off <- panel_daily %>%
     left_join(enrolled_lookup, by = c("lga_clean", "year_month"))
   
   panel_monthly_off <- panel_monthly %>%
     left_join(enrolled_lookup, by = c("lga_clean", "year_month"))
   
-  n_missing_exposure <- sum(is.na(panel_daily_off$enrolled_children) |
-                              panel_daily_off$enrolled_children <= 0)
-  cat("Daily rows missing a usable enrolled_children value:", n_missing_exposure,
-      "of", nrow(panel_daily_off), "\n")
-  if (n_missing_exposure > 0) {
-    cat("These rows are dropped from the offset models below (log(0) or log(NA)\n")
-    cat("is undefined) — check enrolled_lookup coverage if this number is large.\n")
-  }
-  cat("\n")
-  
   panel_daily_off_valid   <- panel_daily_off   %>% filter(!is.na(enrolled_children), enrolled_children > 0)
   panel_monthly_off_valid <- panel_monthly_off %>% filter(!is.na(enrolled_children), enrolled_children > 0)
   
-  # P1_off / P4_off: same FE structure as P1/P4 above, now with an offset
   p1_off <- feols(log_visits ~ precip_anomaly_pct | lga_clean,
                   data    = panel_monthly_off_valid,
                   offset  = ~log(enrolled_children),
@@ -633,21 +475,17 @@ if (!file.exists(lga_month_path)) {
                   offset  = ~log(enrolled_children),
                   cluster = ~lga_clean)
   
-  # NB counterpart with offset — fenegbin's own offset argument, exposure
-  # enters the count model directly rather than via a log-visits transform
   p4_nb_off <- fenegbin(n_visits ~ precip_anomaly_pct | lga_clean + dow_num + ym_factor,
                         data    = panel_daily_off_valid,
                         offset  = ~log(enrolled_children),
                         cluster = ~lga_clean)
   
-  # Spline — non-linear precip term, no offset (isolates the linearity
-  # question from the exposure question; combine the two only if both turn
-  # out to matter on their own)
+  # No offset on the spline — isolates the linearity question from the
+  # exposure question.
   p4_spline <- feols(log_visits ~ splines::ns(precip_anomaly_pct, df = 3) | lga_clean + dow_num + ym_factor,
                      data    = panel_daily,
                      cluster = ~lga_clean)
   
-  cat("--- P4 (original, no offset) vs P4_off (with offset) vs P4_nb_off vs P4_spline ---\n\n")
   etable(p4, p4_off, p4_nb_off, p4_spline,
          title    = "Precipitation robustness — offset and spline specifications",
          digits   = 4,
@@ -665,12 +503,6 @@ if (!file.exists(lga_month_path)) {
     title   = "Precipitation — exposure-offset and spline robustness (Prabin, 15/7/2026)",
     output  = file.path(out_dir, "02_regression_precip_robustness_prabin.txt")
   )
-  
-  cat("\nTable saved to:", file.path(out_dir, "02_regression_precip_robustness_prabin.txt"), "\n")
-  cat("Compare the precip_anomaly_pct coefficient's sign, magnitude and\n")
-  cat("significance across all four columns against the original P4 result\n")
-  cat("in 02_regression_precip_visits.txt before concluding the offset or\n")
-  cat("the spline changes anything for this variable.\n\n")
 }
 
 #----------------------------------------------------------------------------
@@ -680,8 +512,6 @@ if (!file.exists(lga_month_path)) {
 ###################################
 
 pal <- c("Ungogo" = "#D84A38", "Gabasawa" = "#1D6FA4")
-
-# -- Plot 1: Scatter — precipitation anomaly vs log visits --------------
 
 v1 <- ggplot(panel_daily, aes(x = precip_anomaly_pct, y = log_visits,
                               colour = lga_clean)) +
@@ -698,8 +528,6 @@ v1 <- ggplot(panel_daily, aes(x = precip_anomaly_pct, y = log_visits,
   theme_minimal(base_size = 12) +
   theme(plot.title      = element_text(face = "bold"),
         legend.position = "top")
-
-# -- Plot 2: Visits and precipitation time series ------------------------
 
 v2 <- ggplot(panel_daily, aes(x = visit_date)) +
   geom_line(aes(y = n_visits, colour = lga_clean),
@@ -718,8 +546,6 @@ v2 <- ggplot(panel_daily, aes(x = visit_date)) +
   theme(plot.title      = element_text(face = "bold"),
         legend.position = "top",
         axis.text.x     = element_text(angle = 30, hjust = 1))
-
-# -- Plot 3: Monthly precip anomaly vs monthly visits, by LGA ------------
 
 v3 <- ggplot(panel_monthly, aes(x = precip_anomaly_pct, y = n_visits,
                                 colour = lga_clean, label = year_month)) +
@@ -752,8 +578,6 @@ ggsave(
   width    = 14, height = 10, dpi = 300
 )
 
-cat("Plots saved to:", out_dir, "\n\n")
-
 #----------------------------------------------------------------------------
 
 ###################################
@@ -764,24 +588,5 @@ saveRDS(panel_daily,   file.path(out_dir, "02_panel_daily.rds"))
 saveRDS(panel_monthly, file.path(out_dir, "02_panel_monthly.rds"))
 write_csv(panel_daily,   file.path(out_dir, "02_panel_daily.csv"))
 write_csv(panel_monthly, file.path(out_dir, "02_panel_monthly.csv"))
-
-cat("Panels saved:", nrow(panel_daily), "LGA-day rows,",
-    nrow(panel_monthly), "LGA-month rows\n\n")
-
-cat("All analysis outputs saved to:", out_dir, "\n")
-cat("  02_regression_precip_visits.txt\n")
-cat("  02_regression_precip_nb_comparison.txt\n")
-cat("  02_regression_precip_robustness_prabin.txt   <- offset + spline, see Section 12b\n")
-cat("  02_precip_visits_panel.png\n")
-cat("  02_panel_daily.rds / .csv\n")
-cat("  02_panel_monthly.rds / .csv\n\n")
-
-cat("--- Script complete ---\n")
-cat("Reminder: the pcode override in Section 4 needs independent verification\n")
-cat("against the OCHA shapefile before any number above is treated as final.\n")
-cat("Reminder: enrolled_children (Section 12b) is a cumulative-registration\n")
-cat("stock, not a true point-in-time exposure count — treat the offset models\n")
-cat("as the best available check with this pipeline's current data, not a\n")
-cat("finished answer to Prabin's exposure-term comment.\n")
 
 #--------------------------(END)------------------------------#
