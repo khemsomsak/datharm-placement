@@ -1696,7 +1696,7 @@ precip_path_39b <- file.path(home, "03_output/02_chirps_data/02_chirps_data_kk_m
 heat_path_39b   <- file.path(era_dir, "06_panel_daily.rds")
 ndvi_path_39b   <- file.path(home, "03_output/07_ndvi/07_ndvi_monthly.rds")
 
-# --- Rainfall (Figure 3.9b) --------------------------------------------
+# --- Rainfall (Figure D.3) --------------------------------------------
 if (map_boundaries_loaded && require_file(precip_path_39b, "rainfall map")) {
   precip_lga_39b <- readRDS(precip_path_39b) %>%
     group_by(state, lga_name_mchtrack) %>%
@@ -1724,10 +1724,10 @@ if (map_boundaries_loaded && require_file(precip_path_39b, "rainfall map")) {
 } else {
   fig_weather_rainfall <- placeholder_plot("MISSING INPUT -- rainfall map")
 }
-fig_titles[["fig_weather_rainfall"]] <- "Figure 3.9b.  Mean monthly rainfall by LGA (CHIRPS)"
+fig_titles[["fig_weather_rainfall"]] <- "Figure D.3.  Mean monthly rainfall by LGA (CHIRPS)"
 artifacts$fig_weather_rainfall_path <- save_fig(fig_weather_rainfall, "fig_weather_rainfall", width = 7, height = 6, dpi = 150)
 
-# --- Heat (Figure 3.9c) -------------------------------------------------
+# --- Heat (Figure D.4) -------------------------------------------------
 # Kano-only by construction, not a display choice: Ungogo and Gabasawa
 # are the full extent of the ERA5/UTCI panel used in the heat model.
 if (map_boundaries_loaded && require_file(heat_path_39b, "heat map")) {
@@ -1758,10 +1758,10 @@ if (map_boundaries_loaded && require_file(heat_path_39b, "heat map")) {
 } else {
   fig_weather_heat <- placeholder_plot("MISSING INPUT -- heat map")
 }
-fig_titles[["fig_weather_heat"]] <- "Figure 3.9c.  Mean daytime heat (ERA5/UTCI) for Kano's monitored LGAs"
+fig_titles[["fig_weather_heat"]] <- "Figure D.4.  Mean daytime heat (ERA5/UTCI) for Kano's monitored LGAs"
 artifacts$fig_weather_heat_path <- save_fig(fig_weather_heat, "fig_weather_heat", width = 7, height = 6, dpi = 150)
 
-# --- NDVI (Figure 3.9d) --------------------------------------------------
+# --- NDVI (Figure D.5) --------------------------------------------------
 if (map_boundaries_loaded && require_file(ndvi_path_39b, "NDVI map")) {
   ndvi_lga_39b <- readRDS(ndvi_path_39b) %>%
     group_by(state, lga_name) %>%
@@ -1790,7 +1790,7 @@ if (map_boundaries_loaded && require_file(ndvi_path_39b, "NDVI map")) {
 } else {
   fig_weather_ndvi <- placeholder_plot("MISSING INPUT -- NDVI map")
 }
-fig_titles[["fig_weather_ndvi"]] <- "Figure 3.9d.  Mean vegetation greenness (NDVI) by LGA"
+fig_titles[["fig_weather_ndvi"]] <- "Figure D.5.  Mean vegetation greenness (NDVI) by LGA"
 artifacts$fig_weather_ndvi_path <- save_fig(fig_weather_ndvi, "fig_weather_ndvi", width = 7, height = 6, dpi = 150)
 
 #----------------------------------------------------------------------------
@@ -1914,9 +1914,14 @@ if (require_file(mb_path, "Figure D.1 age at tracing")) {
   # before saving this dataset, so no further capping is needed here.
   d_ageD1 <- readRDS(mb_path) %>% filter(in_primary_sample, !is.na(age_months_tracing))
   
+  # sqrt x-axis: most attempts sit under ~20 months, but the axis needs to
+  # reach 180 to show the full range, which compresses exactly the region
+  # with the most data. sqrt gives that region more room without cutting
+  # off or truncating the tail.
   fig_d_1 <- ggplot(d_ageD1, aes(x = age_months_tracing, fill = state)) +
     geom_histogram(bins = 40, position = "identity", alpha = 0.6, colour = NA) +
     scale_fill_manual(values = pal_state) +
+    scale_x_continuous(trans = "sqrt", breaks = c(0, 5, 10, 20, 35, 55, 80, 110, 145, 180)) +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "Age at tracing, by state", x = "Age at tracing (months)", y = "Attempts",
          fill = NULL) +

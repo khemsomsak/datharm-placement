@@ -1,11 +1,13 @@
 ---
-title: "Zero-Dose Children and Defaulter Recovery in Northern Nigeria: Evidence from the MCHTrack Programme"
+title: "Lost and Found: Tracking Unvaccinated Children and the Search for a Weather Signal in Northern Nigeria"
 subtitle: "MSc in International Health and Tropical Medicine, Nuffield Department of Medicine, University of Oxford"
 author: "Examination Candidate Number: 1102514"
 date: "`r {mo<-c('January','February','March','April','May','June','July','August','September','October','November','December'); y<-as.integer(format(Sys.Date(),'%Y')); if (y>2100) y<-y-543; sprintf('%d %s %d', as.integer(format(Sys.Date(),'%d')), mo[as.integer(format(Sys.Date(),'%m'))], y)}`"
+toc-title: "Table of Contents"
 output:
   word_document:
-    toc: false
+    toc: true
+    toc_depth: 3
     number_sections: false
     fig_caption: true
     reference_docx: 11_word_reference.docx
@@ -17,7 +19,7 @@ source("11_dissertation_setup.R")
 ```
 
 ::: {custom-style="TitleInfo"}
-Word count: 10,506 (inclusive of visualisation placeholders and callouts; excludes abstract, references, tables, figures and appendices per exam conventions)
+Word count: approximately 9,200 (Chapters I-V main text only; excludes front matter, abstract, references, tables, figures and appendices per exam conventions)
 :::
 
 ```{=openxml}
@@ -26,19 +28,102 @@ Word count: 10,506 (inclusive of visualisation placeholders and callouts; exclud
 
 ## Candidate's Contribution and Declaration
 
-This dissertation analyses programme data from MCHTrack, a community health worker-based digital immunisation tracking system operated by DATHARM, a Nigerian non-governmental organisation, across Kano and Katsina states in northern Nigeria between 1 August 2024 and 31 March 2026.
+::: {custom-style="IntroBlock"}
 
-The candidate conducted a six-week in-person placement with DATHARM at their offices in Abuja, Nigeria, during which time the primary data were obtained and fieldwork was conducted. All quantitative analysis, including data cleaning, model specification, regression analysis, geospatial and weather data integration, and results interpretation, was designed and performed independently by the candidate using R. The candidate independently reviewed and verified all citations in the final draft. The analytical pipeline is documented across eight R scripts, which are provided as supplementary material alongside a link to the project's GitHub repository.
+This dissertation analyses programme data from MCHTrack, a community health worker-based digital immunisation tracking system operated by DATHARM, a Nigerian non-governmental organisation, across Kano and Katsina states in northern Nigeria between August 2024 and March 2026.
 
-The candidate undertook two site visits to primary healthcare centres in the wider Abuja area for contextual grounding, and held informal conversations with DATHARM staff, including programme coordinators for Kano and Katsina, which informed the qualitative context presented in the discussion. These conversations were informal and observational in nature; no structured interview protocol was applied and no independent qualitative analysis was conducted.
+I undertook a six-week in-person placement with DATHARM at their offices in Abuja, Nigeria, during which I obtained the primary data and conducted fieldwork. I designed the analytical approach myself: I decided how to define zero-dose status and recovery, which variables to include, which model specification to treat as primary, and how to interpret every result. I built and maintained the analytical pipeline across eight R scripts, provided as supplementary material alongside a link to the project's GitHub repository and described script by script in Appendix B, with substantial AI assistance in writing, debugging, and refactoring the code itself, described in full in the AI use statement below.
 
-The following assistance was received during this project. Academic supervision was provided by Dr Prabin Dahal and Dr Aisha Adamu (primary supervisors), Dr Lucy Harrison, and a geospatial methods advisor. Supervisors reviewed a complete first draft of the dissertation and provided written feedback. Raw programme data were provided by DATHARM's data manager, who also responded to clarifying questions regarding specific data anomalies identified during the audit. DATHARM's Chief Executive Officer, Amina Ahmad, is named as a collaborator on this work and provided programme context and review. A research partner, Ahmed Ismail, conducted a parallel and independently written analysis of delivery mode effectiveness using the same MCHTrack dataset; his analysis does not form part of this dissertation.
+I undertook two site visits to primary healthcare centres in the wider Abuja area for contextual grounding, and held informal conversations with DATHARM staff, including programme coordinators for Kano and Katsina, which informed the qualitative context presented in the discussion. These conversations were informal and observational; I did not apply a structured interview protocol or conduct independent qualitative analysis.
 
-Statistical advice was obtained from supervisors during the course of normal supervision meetings. No specialist statistical consultancy was engaged.
+I received the following assistance during this project. Dr Prabin Dahal and Dr Aisha Adamu (primary supervisors), Dr Lucy Harrison, and a geospatial methods advisor provided academic supervision; my supervisors reviewed a complete first draft of the dissertation and gave written feedback. DATHARM's data manager provided the raw programme data and answered clarifying questions about specific data anomalies I identified during the audit. DATHARM's Chief Executive Officer, Amina Ahmad, is named as a collaborator on this work and provided programme context and review. A research partner, Ahmed Ismail, conducted a parallel and independently written analysis of delivery mode effectiveness using the same MCHTrack dataset; his analysis does not form part of this dissertation.
+
+I obtained statistical advice from my supervisors during normal supervision meetings. I did not engage specialist statistical consultancy.
+
+:::
 
 ### Research ethics
 
-DATHARM's collection of MCHTrack programme data was conducted under ethical approval secured through the relevant Nigerian Federal and State Ministry of Health channels, as part of its routine public health programming in Kano and Katsina. The candidate's access to this data was governed by data use agreements signed with DATHARM, not by a separate ethics review process: this dissertation is a secondary analysis of routinely collected, pseudonymised programme data already covered by DATHARM's own regulatory approvals, with no primary data collection and no direct engagement with the beneficiary population at any stage of the research. On this basis, no additional ethical approval was sought specifically for the dissertation. The research plan was reviewed as part of the placement proposal process through the MSc IHTM programme prior to the placement commencing, and no concerns requiring formal ethics referral were identified at that stage.
+::: {custom-style="IntroBlock"}
+
+This dissertation did not require a separate ethics review. DATHARM already held ethical approval for the MCHTrack programme itself, obtained through the relevant Nigerian regulatory channels as part of its routine public health programming in Kano and Katsina, and my access to its programme data was governed by data use agreements signed with DATHARM. I did not need a separate ethics review of my own for three reasons: local approval for the underlying project was already in place before I began; I had no contact with the beneficiary population at any stage of the research; and I had no access to identifiable data, since DATHARM provided the data to me pseudonymised. My research plan was reviewed as part of the placement proposal process through the MSc IHTM programme before the placement began, and no concerns requiring formal ethics referral were identified at that stage.
+
+:::
+
+### Statement on the use of artificial intelligence
+
+::: {custom-style="IntroBlock"}
+
+I used Claude (Anthropic) throughout both the analysis and writing phases of this project.
+
+During the analysis phase, I used it to help write, debug, and refactor the R scripts behind this dissertation's pipeline: fixing bugs, restructuring code when supervisors' feedback required a different model specification, and building the figures and tables.
+
+During the writing phase, I used it for drafting and restructuring prose in response to supervisor comments, for style and consistency editing, and for a systematic citation audit that checked every external source cited in this dissertation against the original text.
+
+:::
+
+```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+```
+
+## Abstract
+
+::: {custom-style="Abstract"}
+
+**Background.** Community-health-worker digital registries such as DATHARM's MCHTrack aim to close two gaps in routine immunisation: children never enrolled (zero-dose) and children enrolled but lost to follow-up. Whether a programme's own records can support the claims made about it is rarely tested directly.
+
+**Methods.** I analysed MCHTrack records for 71,124 children in Kano and Katsina, Nigeria, August 2024 to March 2026. Ward-fixed-effects logistic regression tested distance, age, and gender against zero-dose status under a primary (operational) and a strict (no vaccine contact) definition, and against tracing recovery under a strict (confirmed) and permissive (self-reported) definition. A negative binomial model tested daily facility visit counts in Kano against rainfall, heat, and vegetation greenness.
+
+**Results.** Distance predicted little under the primary zero-dose definition (a non-significant 4 per cent increase in odds per kilometre) but an 87 per cent increase under the strict definition, roughly fifteen times the primary coefficient. Age showed a comparable amplification. Both lost almost all predictive power once tracing began; SMS or phone contact was associated with higher recovery odds (55-56 per cent), though the data cannot separate a genuine channel effect from attempt sequencing. Recovery stood at 42.6 per cent under a strict, verifiable definition against 77.2 per cent under a permissive definition the protocol also supports, a gap produced by an unrecorded card-check step. None of the three weather variables showed a significant or consistent effect on visit counts under any properly powered specification.
+
+**Conclusion.** Programme records like MCHTrack's can support real findings, distance's amplification under a strict zero-dose definition, and a recovery-reporting gap wide enough to change how performance is judged, but only once verification limits are made explicit. The null weather result cannot be resolved with fields MCHTrack currently records. Both conclusions apply beyond this programme, to any digital immunisation registry built the same way.
+
+:::
+
+```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+```
+
+## List of Figures
+
+| | |
+|---|---|
+| Figure 1.1 | MCHTrack footprint map across Kano and Katsina |
+| Figure 2.1 | A child's path through MCHTrack |
+| Figure 2.2 | Duplicate record set sizes, by state and table |
+| Figure 2.2b | Monthly facility visit volume, by state |
+| Figure 2.3 | Variance-to-mean ratio of daily facility visit counts, by LGA |
+| Figure 2.4 | Baseline distributions of age, distance, and enrolment timing, by state |
+| Figure 3.1 | Distance and age at registration, by number of vaccine doses recorded |
+| Figure 3.2 | Sample construction waterfall |
+| Figure 3.3 | Zero-dose model coefficients |
+| Figure 3.5 | Tracing outcomes and timing |
+| Figure 3.6 | Recovery model coefficients |
+| Figure 3.7 | Strict versus permissive recovery rate, by state |
+| Figure 3.8 | Daily visit diagnostics, Kano's Ungogo and Gabasawa LGAs |
+| Figure 3.9 | Weather robustness coefficient plot |
+| Figure D.1 | Age at tracing, by state |
+| Figure D.2 | Correlation among each model's predictors and outcome |
+| Figure D.3 | Mean monthly rainfall by LGA (CHIRPS) |
+| Figure D.4 | Mean daytime heat by LGA (ERA5/UTCI) |
+| Figure D.5 | Mean vegetation greenness (NDVI) by LGA |
+| Figure E.1 | Ward-level residuals, ranked by magnitude |
+| Figure E.2 | Ward-level residuals, mapped |
+| Figure F.1 | Off-network share of recovered defaulters, by ward |
+
+## List of Tables
+
+| | |
+|---|---|
+| Table 2.1 | Baseline characteristics of enrolled children, by site |
+| Table 2.2 | Key definitions used throughout this thesis |
+| Table 3.1a | Zero-dose model — regression summary |
+| Table 3.1b | Recovery model — regression summary |
+| Table 3.2 | Weather model — main results |
+| Table 3.3 | Weather model — offset and non-linearity robustness |
+| Table 4.1 | This thesis against the two closest registry-based precedents |
+| Table 4.2 | Convergence of quantitative findings and field observation |
+| Table C.1 | Weather model — negative binomial and OLS compared |
 
 ```{=openxml}
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
