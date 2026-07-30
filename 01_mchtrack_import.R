@@ -1,7 +1,7 @@
 ########################################
 #  01_mchtrack_import.R                #
 #  Created: 14/5/2026                  #
-#  Updated: 15/7/2026                  #
+#  Updated: 28/7/2026                  #
 ########################################
 
 # Reset environment -----------------------------------------------------
@@ -162,6 +162,12 @@ capture_dup_distribution <- function(df, key_cols, table_label) {
 #Pool rare set sizes into "Other" for plotting — same treatment as the
 #original DATHARM audit chart, data-driven (<1% of duplicated rows
 #within its own table) rather than a hand-picked list ----
+# FIX (28/7/2026): this summarise() previously dropped n_sets entirely,
+# keeping only rows_from_duplication. That broke 10_visualizations.R's
+# Figure 2.2 after its 28/7/2026 fix switched the bar height to n_sets
+# (distinct records affected) per Lucy's comment -- n_sets must be pooled
+# the same way as rows_from_duplication when rare set sizes collapse into
+# "Other", not silently discarded.
 build_dist_for_plot <- function(dist) {
   dist %>%
     group_by(table) %>%
@@ -169,7 +175,8 @@ build_dist_for_plot <- function(dist) {
     ungroup() %>%
     mutate(set_size_label = if_else(pct_of_dup_rows < 0.01, "Other", as.character(set_size))) %>%
     group_by(table, state, set_size_label) %>%
-    summarise(rows_from_duplication = sum(rows_from_duplication), .groups = "drop")
+    summarise(rows_from_duplication = sum(rows_from_duplication),
+              n_sets = sum(n_sets), .groups = "drop")
 }
 
 # 2. Clean and stack facility_visits -----------------------------------------------
@@ -219,9 +226,11 @@ dist_fv <- capture_dup_distribution(
   c("patient_id", "visit_date", "health_center_id", "vaccines_administered"),
   "Facility visits (vaccination records)"
 )
+fv_before_state <- data_fv_clean %>% count(state, name = "rows_before")
 data_fv_clean <- data_fv_clean %>%
   distinct(patient_id, visit_date, health_center_id, vaccines_administered, .keep_all = TRUE)
 n_fv_dedup_removed <- n_fv_before_dedup - nrow(data_fv_clean)
+fv_after_state <- data_fv_clean %>% count(state, name = "rows_after")
 
 #Validate and sanity check ----
 cat("facility_visits after cleaning:\n")
@@ -286,9 +295,11 @@ mutate(
 # type it is. Same re-entry-vs-correction caveat as facility_visits above.
 n_ll_before_dedup <- nrow(data_ll_clean)
 dist_ll <- capture_dup_distribution(data_ll_clean, "pseudo_id", "Linelisted (children enrolled)")
+ll_before_state <- data_ll_clean %>% count(state, name = "rows_before")
 data_ll_clean <- data_ll_clean %>%
   distinct(pseudo_id, .keep_all = TRUE)
 n_ll_dedup_removed <- n_ll_before_dedup - nrow(data_ll_clean)
+ll_after_state <- data_ll_clean %>% count(state, name = "rows_after")
 
 # Add further definitions of Zero Dose, already in data_ll_clean as zero_dose == TRUE
 
@@ -362,9 +373,11 @@ data_zd_clean <- data_zd_raw %>%
 # before this update — flagged, not previously verified either way.
 n_zd_before_dedup <- nrow(data_zd_clean)
 dist_zd <- capture_dup_distribution(data_zd_clean, "id", "Identified zero-dose")
+zd_before_state <- data_zd_clean %>% count(state, name = "rows_before")
 data_zd_clean <- data_zd_clean %>%
   distinct(id, .keep_all = TRUE)
 n_zd_dedup_removed <- n_zd_before_dedup - nrow(data_zd_clean)
+zd_after_state <- data_zd_clean %>% count(state, name = "rows_after")
 
 #Validate ----
 cat("identifiedZd after cleaning:\n")
@@ -415,9 +428,11 @@ data_dt_clean <- data_dt_raw %>%
 # before this update — flagged, not previously verified either way.
 n_dt_before_dedup <- nrow(data_dt_clean)
 dist_dt <- capture_dup_distribution(data_dt_clean, "id", "Defaulter tracing")
+dt_before_state <- data_dt_clean %>% count(state, name = "rows_before")
 data_dt_clean <- data_dt_clean %>%
   distinct(id, .keep_all = TRUE)
 n_dt_dedup_removed <- n_dt_before_dedup - nrow(data_dt_clean)
+dt_after_state <- data_dt_clean %>% count(state, name = "rows_after")
 
 #Validate ----
 cat("defaulterTracing after cleaning:\n")
@@ -440,6 +455,35 @@ dedup_summary_import <- tibble::tribble(
 )
 cat("--- Deduplication summary (all four tables) ---\n")
 print(dedup_summary_import)
+cat("\n")
+
+#Deduplication summary, split by state ----
+# Same before/after counts as dedup_summary_import above, but per state
+# rather than pooled. Feeds thesis Figure 3.2 (pooled duplicate-removed
+# step) and Figure 3.2b (state-split waterfall) — those charts previously
+# only mentioned duplicates in caption text because this breakdown didn't
+# exist; now the waterfalls can show it as an actual excluded step.
+combine_by_state <- function(before_state, after_state, table_label) {
+  before_state %>%
+    full_join(after_state, by = "state") %>%
+    mutate(
+      rows_before = replace_na(rows_before, 0L),
+      rows_after  = replace_na(rows_after, 0L),
+      duplicates_removed = rows_before - rows_after,
+      table = table_label
+    )
+}
+
+dedup_summary_by_state_import <- bind_rows(
+  combine_by_state(fv_before_state, fv_after_state, "facility_visits"),
+  combine_by_state(ll_before_state, ll_after_state, "linelisted"),
+  combine_by_state(zd_before_state, zd_after_state, "identifiedZd"),
+  combine_by_state(dt_before_state, dt_after_state, "defaulterTracing")
+) %>%
+  select(table, state, rows_before, duplicates_removed, rows_after)
+
+cat("--- Deduplication summary by state ---\n")
+print(dedup_summary_by_state_import)
 cat("\n")
 
 #Duplicate set-size distribution (pre-dedup snapshot, all four tables) ----
@@ -755,10 +799,11 @@ saveRDS(data_dt_clean,
         file.path(out_dir, "01_defaultertracing_clean.rds"))
 saveRDS(dedup_summary_import,
         file.path(out_dir, "01_dedup_summary.rds"))
+saveRDS(dedup_summary_by_state_import,
+        file.path(out_dir, "01_dedup_summary_by_state.rds"))
 saveRDS(dedup_set_size_distribution,
         file.path(out_dir, "01_dedup_set_size_distribution.rds"))
 
 
 
 #--------------------------(END)------------------------------#
-

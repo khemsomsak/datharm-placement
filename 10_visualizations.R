@@ -1,7 +1,7 @@
 ########################################
 #  10_visualizations.R                 #
 #  Created: 13/7/2026                  #
-#  Updated: 25/7/2026                  #
+#  Updated: 28/7/2026                  #
 ########################################
 
 # Reset environment -----------------------------------------------------
@@ -144,11 +144,18 @@ save_fig <- function(plot, name, width, height, dpi = 300) {
   path
 }
 
-#--- Colours & theme (unchanged from original 09_visualizations.R) ---
+#--- Colours & theme ---
+# Recovery/outcome triad (col_confirmed/col_offnet/col_notrec) changed
+# 28/7/2026 from green/orange/red to blue/orange/grey per Lucy's comment:
+# the original pairing put green and red at the two ends of the same
+# 3-category scale a reader most needs to tell apart, which is exactly the
+# red-green contrast protanopia/deuteranopia (~4.5% of readers) struggle
+# with most. Blue-orange-grey keeps three visually distinct categories
+# without relying on the red-green channel at all.
 col_sig <- "#1D6FA4"; col_nonsig <- "#B0B0B0"; col_strict <- "#BA7517"
 pal_state <- c("Kano" = "#1D6FA4", "Katsina" = "#BA7517")
 pal_zd <- c("Zero-dose" = "#C0312D", "Vaccinated" = "#5A9FD4")
-col_confirmed <- "#1D9E75"; col_offnet <- "#F4A261"; col_notrec <- "#C0312D"
+col_confirmed <- "#1D6FA4"; col_offnet <- "#E69F00"; col_notrec <- "#666666"
 
 # Caption/subtitle grey darkened and enlarged per Prabin's readability
 # comment (c49, "grey text bit hard to read") — #888 at size 9 falls below
@@ -287,10 +294,12 @@ theme_map_diss <- function(base_size = 12) {
 geom_lga_labels <- function(label_df, label_col = "label", seed = 2026) {
   geom_col_name <- attr(label_df, "sf_column")
   list(ggrepel::geom_label_repel(
+    # size = 3.6 (~10pt) per Lucy's comment that map labels were unreadable
+    # without zooming; was 3.1 (~8.8pt).
     data = label_df, mapping = aes(label = .data[[label_col]], geometry = .data[[geom_col_name]]),
-    stat = "sf_coordinates", inherit.aes = FALSE, seed = seed, size = 3.1, family = "serif",
-    fontface = "bold", colour = "#222", fill = alpha("white", 0.75), label.size = 0,
-    label.padding = unit(0.15, "lines"), box.padding = unit(0.6, "lines"), point.padding = unit(0.3, "lines"),
+    stat = "sf_coordinates", inherit.aes = FALSE, seed = seed, size = 3.6, family = "serif",
+    fontface = "bold", colour = "#222", fill = alpha("white", 0.85), label.size = 0,
+    label.padding = unit(0.18, "lines"), box.padding = unit(0.7, "lines"), point.padding = unit(0.3, "lines"),
     min.segment.length = 0.15, segment.colour = "#888", segment.size = 0.3, max.overlaps = 20
   ))
 }
@@ -482,7 +491,11 @@ if (map_boundaries_loaded && require_file(ll_path_map, "Figure 1.1 footprint map
       filter(!is.na(total_n)) %>%
       mutate(label = paste0(NAME_2, " (", comma(total_n), ")"))
     
-    extent_11 <- bbox_with_buffer(kk_states, 0.06)
+    # Cropped to the actual ward points plotted, not the full Kano/Katsina
+    # state outline -- MCHTrack operates in a subset of wards within each
+    # state, so a state-wide extent left large stretches of empty map with
+    # no data in them.
+    extent_11 <- bbox_with_buffer(ward_counts_11_sf, 0.12)
     
     fig_1_1 <- ggplot() +
       geom_sf(data = bounds_geo$adm1, fill = "#F2F2F2", colour = "white", linewidth = 0.15) +
@@ -494,11 +507,6 @@ if (map_boundaries_loaded && require_file(ll_path_map, "Figure 1.1 footprint map
       scale_size_continuous(name = "Enrolled children", range = c(1.5, 13), labels = comma) +
       coord_sf(xlim = extent_11$xlim, ylim = extent_11$ylim, expand = FALSE, clip = "off") +
       guides(colour = guide_legend(override.aes = list(size = 5))) +
-      labs(caption = paste0(
-        "Each point is one ward, sized by enrolled children (01_linelisted_clean.rds). Point positions are randomly\n",
-        "placed within the correct LGA and are NOT true facility coordinates -- illustrative of coverage and density\n",
-        "only. Labelled LGAs are the top 3 by total enrolment in each state. Administrative boundaries: GADM v4.1\n",
-        "(gadm.org).")) +
       theme_map_diss(12)
   }
 } else {
@@ -525,28 +533,26 @@ fig_2_1 <- ggplot() +
   annotate("rect", xmin = 0.45, xmax = 7.75, ymin = -0.55, ymax = 0.55,
            fill = "#EAF2FB", colour = "#1D6FA4", linewidth = 0.4, linetype = "dashed") +
   annotate("text", x = 7.68, y = 0.47, label = "MCHTrack system boundary",
-           hjust = 1, size = 2.8, colour = "#1D6FA4", fontface = "italic", family = "serif") +
+           hjust = 1, size = 3.4, colour = "#1D6FA4", fontface = "italic", family = "serif") +
   geom_rect(data = boxes, aes(xmin = x - 0.5, xmax = x + 0.5, ymin = -0.32, ymax = 0.32),
             fill = "white", colour = "#333", linewidth = 0.6) +
   geom_text(data = boxes, aes(x = x, y = 0.1, label = label),
-            size = 3.1, fontface = "bold", lineheight = 0.9, family = "serif") +
+            size = 3.6, fontface = "bold", lineheight = 0.9, family = "serif") +
   geom_text(data = boxes, aes(x = x, y = -0.18, label = dataset),
-            size = 2.5, colour = "#555", fontface = "italic", family = "serif") +
+            size = 3.0, colour = "#555", fontface = "italic", family = "serif") +
   annotate("segment", x = c(1.55, 3.55, 5.55), xend = c(2.45, 4.45, 6.45), y = 0, yend = 0,
            arrow = arrow(length = unit(0.14, "cm"), type = "closed"), colour = "#333", linewidth = 0.5) +
   annotate("text", x = 1, y = -0.72, label = "~1 in 5 households\nnot reached in enumeration",
-           size = 2.5, colour = "#C0312D", fontface = "italic", family = "serif") +
+           size = 3.0, colour = "#C0312D", fontface = "italic", family = "serif") +
   annotate("segment", x = 1, xend = 1, y = -0.32, yend = -0.5, colour = "#C0312D", linewidth = 0.4,
            arrow = arrow(length = unit(0.1, "cm"), type = "closed")) +
   annotate("text", x = 7, y = -0.75, label = "Off-network care recorded\nverbally, cannot be verified",
-           size = 2.5, colour = "#BA7517", fontface = "italic", family = "serif") +
+           size = 3.0, colour = "#BA7517", fontface = "italic", family = "serif") +
   annotate("segment", x = 7, xend = 7, y = -0.32, yend = -0.5, colour = "#BA7517", linewidth = 0.4,
            linetype = "dotted", arrow = arrow(length = unit(0.1, "cm"), type = "closed")) +
   scale_x_continuous(limits = c(0.4, 8.0)) + scale_y_continuous(limits = c(-0.95, 0.62)) +
-  labs(caption = "Each stage writes to one dataset. Two events fall outside the system boundary: children never enumerated, and vaccination\ndelivered off-network. Neither is recorded, and both bound what any downstream analysis can observe.") +
   theme_void() +
-  theme(plot.title = element_text(family = "serif", face = "bold", size = 12, margin = margin(b = 6, l = 2)),
-        plot.caption = element_text(family = "serif", colour = "#595959", size = 9.5, hjust = 0, margin = margin(t = 8, l = 2), lineheight = 1.15))
+  theme(plot.title = element_text(family = "serif", face = "bold", size = 12, margin = margin(b = 6, l = 2)))
 
 fig_titles[["fig_2_1"]] <- "Figure 2.1.  MCHTrack data pipeline and its structural blind spots"
 artifacts$fig_2_1_path <- save_fig(fig_2_1, "fig_2_1", width = 8.6, height = 4.2)
@@ -576,17 +582,23 @@ if (require_file(dedup_dist_path, "Figure 2.2 duplicate set-size distribution"))
     mutate(table = factor(table, levels = c("Linelisted (children enrolled)", "Facility visits (vaccination records)")),
            state = factor(state, levels = c("Kano", "Katsina")))
   
+  # CHANGED 28/7/2026 per Lucy's comment: the bar height was previously
+  # rows_from_duplication (total excess rows, n_sets * set_size), which
+  # over-counts by conflating "how many records were duplicated" with "how
+  # many times". Switched to n_sets -- the number of distinct records/
+  # children affected -- which is the more intuitive quantity and matches
+  # what the caption and Section II.A prose actually report (record counts,
+  # not row counts).
   fig_2_2 <- ggplot(dedup_dist_22,
                     aes(x = fct_reorder(set_size_label, suppressWarnings(as.numeric(set_size_label)), .na_rm = FALSE),
-                        y = rows_from_duplication, fill = table)) +
+                        y = n_sets, fill = table)) +
     geom_col(position = position_dodge(width = 0.7), width = 0.62) +
     facet_wrap(~state) +
     scale_fill_manual(values = c("Linelisted (children enrolled)" = "#3498db",
                                  "Facility visits (vaccination records)" = "#e74c3c")) +
-    labs(subtitle = "Computed live from 09_data_investigations.R · Kano panel empty because Kano has no duplicates",
-         x = "Number of times a record appears (duplicate set size)",
-         y = "Rows created by duplication", fill = NULL,
-         caption = "Computed live from 09_dedup_set_size_distribution.rds (compound-key duplicate detection: pseudo_id for linelisted;\npatient_id + visit_date + health_center_id + vaccines_administered for facility visits). Duplication traced to a device\nhandover causing records to sync more than once, confirmed by the Katsina coordinator.") +
+    scale_y_continuous(labels = comma) +
+    labs(x = "Number of times a record appears (duplicate set size)",
+         y = "Distinct records affected", fill = NULL) +
     theme_diss(11) +
     theme(panel.grid.major.x = element_blank())
 } else {
@@ -623,16 +635,14 @@ if (require_file(lga_panel_path, "Figure 2.2b data reliability by state")) {
              ymin = -Inf, ymax = Inf, fill = "#C0312D", alpha = 0.06) +
     geom_vline(xintercept = katsina_cutoff, linetype = "dashed", colour = "#C0312D", linewidth = 0.4) +
     annotate("text", x = katsina_cutoff, y = max(reliability_monthly$imm_visits, na.rm = TRUE),
-             label = "Katsina excluded from RQ3\nbeyond this point", hjust = -0.05, vjust = 1,
-             size = 2.6, colour = "#C0312D", fontface = "italic", family = "serif") +
+             label = "Katsina excluded from weather\nmodel beyond this point", hjust = -0.05, vjust = 1,
+             size = 3.4, colour = "#C0312D", fontface = "italic", family = "serif") +
     geom_line(linewidth = 0.7) +
     geom_point(size = 1.3) +
     scale_colour_manual(values = pal_state) +
     scale_x_date(date_breaks = "3 months", date_labels = "%b %Y") +
     scale_y_continuous(labels = comma) +
-    labs(subtitle = "Monthly immunisation visits, both states, full study window",
-         x = NULL, y = "Immunisation visits", colour = NULL,
-         caption = "Computed live from 01_panel_lga_month.rds. Katsina's post-Sept-2025 data quality issues motivate RQ3's Kano-only\nscope (see Methods) and are a candidate explanation for the greater ward-level heterogeneity Katsina shows in IV.C.") +
+    labs(x = NULL, y = "Immunisation visits", colour = NULL) +
     theme_diss(11)
 } else {
   fig_2_2b <- placeholder_plot("MISSING INPUT\n01_panel_lga_month.rds\n(run 01_mchtrack_import.R)")
@@ -656,14 +666,11 @@ if (require_file(vm_path, "Figure 2.3 overdispersion")) {
   fig_2_3 <- ggplot(vm_long, aes(x = lga_clean, y = value, fill = stat)) +
     geom_col(position = position_dodge(0.6), width = 0.5, alpha = 0.9) +
     geom_text(data = vm, aes(x = lga_clean, y = Variance, label = paste0("V/M = ", ratio)),
-              inherit.aes = FALSE, vjust = -0.5, size = 3.2, fontface = "bold",
+              inherit.aes = FALSE, vjust = -0.5, size = 3.4, fontface = "bold",
               colour = "#333", family = "serif") +
     scale_fill_manual(values = c("Mean" = "#1D6FA4", "Variance" = "#C0312D")) +
     scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.12))) +
-    labs(subtitle = "Variance far exceeds the mean in both LGAs · rules out a standard Poisson specification",
-         x = NULL, y = "Daily visits",
-         caption = paste0("Variance-to-mean ratios computed live from 06_panel_daily.rds. This overdispersion is why negative binomial,\n",
-                          "not log-transformed OLS, is the primary specification for all weather models; Figure 3.10 compares the two.")) +
+    labs(x = NULL, y = "Daily visits") +
     theme_diss(11)
 } else {
   fig_2_3 <- placeholder_plot("MISSING INPUT\n06_panel_daily.rds")
@@ -714,42 +721,43 @@ artifacts$tab_2_1 <- tab_2_1
 ########################################
 
 if (require_file(bl_path, "Figure 2.4 baseline distributions")) {
+  # CHANGED 28/7/2026 per Lucy: 1x3 layout -> 2x2 with one shared legend
+  # (guide_area(), 4th cell) instead of a legend repeated on every panel;
+  # text sizes bumped to >=10pt; subtitles trimmed to bare A/B/C tags, all
+  # other descriptive text moved to the Rmd caption.
   p_age24 <- ggplot(bl %>% filter(age_months_at_reg <= 60), aes(x = age_months_at_reg, fill = state)) +
     geom_histogram(bins = 40, position = "identity", alpha = 0.6, colour = NA) +
     scale_fill_manual(values = pal_state) +
     scale_y_continuous(labels = comma) +
-    labs(subtitle = "A. Age at registration", x = "Age at registration (months)", y = "Children") +
-    theme_diss(11)
+    labs(subtitle = "A. Age at registration", x = "Age at registration (months)", y = "Children", fill = NULL) +
+    theme_diss(12)
   
   p_dist24 <- ggplot(bl %>% filter(hf_distance_km <= 5), aes(x = hf_distance_km, fill = state)) +
     geom_histogram(bins = 45, position = "identity", alpha = 0.6, colour = NA) +
     scale_fill_manual(values = pal_state) +
     scale_x_continuous(labels = label_number(suffix = " km")) +
     scale_y_continuous(labels = comma) +
-    labs(subtitle = "B. Distance to health facility", x = "Distance (km)", y = NULL) +
-    theme_diss(11)
+    labs(subtitle = "B. Distance to health facility", x = "Distance (km)", y = "Children", fill = NULL) +
+    theme_diss(12)
   
   p_time24 <- ggplot(bl, aes(x = registration_date, fill = state)) +
     geom_histogram(bins = 30, position = "identity", alpha = 0.6, colour = NA) +
     scale_fill_manual(values = pal_state) +
     scale_x_date(date_labels = "%b %Y") +
     scale_y_continuous(labels = comma) +
-    labs(subtitle = "C. Enrolment over time", x = NULL, y = "Children") +
-    theme_diss(11)
+    labs(subtitle = "C. Enrolment over time", x = NULL, y = "Children", fill = NULL) +
+    theme_diss(12)
   
-  fig_2_4 <- (p_age24 | p_dist24 | p_time24) +
+  fig_2_4 <- (p_age24 + p_dist24 + p_time24 + guide_area()) +
+    plot_layout(ncol = 2, guides = "collect") +
     plot_annotation(
-      subtitle = paste0("Primary analytic sample · N = ", comma(nrow(bl)), " · corresponds to Table 2.1"),
-      caption = "Computed live from 03_model_a_dataset.rds.",
-      theme = theme(plot.title = element_text(family = "serif", face = "bold", size = 12.5),
-                    plot.subtitle = element_text(family = "serif", size = 10, colour = "#4d4d4d"),
-                    plot.caption = element_text(family = "serif", size = 10, colour = "#595959", hjust = 0, lineheight = 1.15)))
+      theme = theme(legend.position = "bottom", legend.text = element_text(family = "serif", size = 11)))
 } else {
   fig_2_4 <- placeholder_plot("MISSING INPUT\n03_model_a_dataset.rds")
 }
 
 fig_titles[["fig_2_4"]] <- "Figure 2.4.  Baseline characteristics by site — age, distance, and enrolment timing"
-artifacts$fig_2_4_path <- save_fig(fig_2_4, "fig_2_4", width = 11, height = 4.0)
+artifacts$fig_2_4_path <- save_fig(fig_2_4, "fig_2_4", width = 9, height = 7.5)
 
 #----------------------------------------------------------------------------
 
@@ -766,25 +774,21 @@ if (require_file(ma_path, "Figure 3.1 predictor distributions")) {
   
   pdist <- ggplot(pm %>% filter(hf_distance_km <= 5), aes(x = hf_distance_km, fill = zd)) +
     geom_histogram(bins = 45, position = "identity", alpha = 0.6, colour = NA) +
-    scale_fill_manual(values = pal_zd) +
+    scale_fill_manual(values = pal_zd, name = NULL) +
     scale_x_continuous(labels = label_number(suffix = " km")) +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "A. Distance to health facility", x = "Distance (km)", y = "Children") +
-    theme_diss(11)
+    theme_diss(12)
   page31 <- ggplot(pm %>% filter(age_months_at_reg <= 60), aes(x = age_months_at_reg, fill = zd)) +
     geom_histogram(bins = 40, position = "identity", alpha = 0.6, colour = NA) +
-    scale_fill_manual(values = pal_zd) +
+    scale_fill_manual(values = pal_zd, name = NULL) +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "B. Age at registration", x = "Age at registration (months)", y = NULL) +
-    theme_diss(11)
+    theme_diss(12)
   
   fig_3_1 <- (pdist | page31) +
-    plot_annotation(
-      subtitle = paste0("Primary analytic sample · N = ", comma(n_fig31), " · Rimi and GPS-error distances excluded"),
-      caption = "Zero-dose children sit further along the distance tail and skew older at registration, though both distributions overlap\nsubstantially. A child can live close to a facility and still be missed.",
-      theme = theme(plot.title = element_text(family = "serif", face = "bold", size = 12.5),
-                    plot.subtitle = element_text(family = "serif", size = 10, colour = "#4d4d4d"),
-                    plot.caption = element_text(family = "serif", size = 10, colour = "#595959", hjust = 0, lineheight = 1.15)))
+    plot_layout(guides = "collect") &
+    theme(legend.position = "bottom")
 } else {
   fig_3_1 <- placeholder_plot("MISSING INPUT\n03_model_a_dataset.rds")
   n_fig31 <- NA
@@ -882,13 +886,15 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
     mutate(delta = case_when(type == "start" ~ n, type == "end" ~ 0, TRUE ~ -n),
            remaining = cumsum(delta))
   
+  # This caveat (Null-LGA rows not yet excluded from the sample shown) is
+  # substantive, not decorative, so it is exported for the Rmd's external
+  # caption rather than baked into the plot image itself.
   known_issues_lab <- paste0(
-    "NOT YET excluded from the primary sample above (03_regression.R still reads 01's\n",
-    "non-Null-LGA-filtered tables — see 09_data_investigations.R Section 1): ",
-    comma(null_lga_n), " Null-LGA rows.\n",
-    "If applied, the primary sample above would fall to approximately ",
+    comma(null_lga_n), " Null-LGA rows are not yet excluded from the primary sample shown here. ",
+    "If applied, the primary sample would fall to approximately ",
     comma(n_final - coalesce(null_lga_n, 0L)), "."
   )
+  artifacts$fig_3_2_known_issues <- known_issues_lab
   
   fig_3_2 <- ggplot(wf, aes(x = step)) +
     geom_rect(aes(xmin = step - 0.4, xmax = step + 0.4,
@@ -900,18 +906,20 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
               colour = "white", family = "serif") +
     geom_text(data = ~subset(.x, type == "exclude" & n > 0),
               aes(y = remaining + n + max(wf$n) * 0.06, label = paste0("−", comma(n))),
-              size = 2.6, fontface = "bold", colour = "#C0312D", family = "serif") +
+              size = 2.6, fontface = "bold", colour = "#BA7517", family = "serif") +
     geom_text(aes(y = -max(wf$remaining, na.rm = TRUE) * 0.05, label = label), size = 2.15, lineheight = 0.9,
               colour = "#333", family = "serif") +
-    scale_fill_manual(values = c("start" = "#1D6FA4", "exclude" = "#C0312D", "end" = "#1D9E75"),
+    # Colourblind-safe triad (blue / amber / navy) replaces the previous
+    # blue / red / green, which paired a red "exclude" bar against a green
+    # "end" bar -- the one combination protanopia/deuteranopia readers
+    # struggle to tell apart.
+    scale_fill_manual(values = c("start" = "#1D6FA4", "exclude" = "#BA7517", "end" = "#10243B"),
                       labels = c("start" = "Starting N", "exclude" = "Excluded", "end" = "Analytic sample"),
                       guide = guide_legend(reverse = TRUE)) +
     scale_y_continuous(labels = comma) +
     scale_x_continuous(breaks = NULL) +
-    labs(subtitle = paste0("Primary sample: ", comma(n_final), " children after all exclusions applied by 01_mchtrack_import.R and 03_regression.R"),
-         x = NULL, y = "Row count",
-         caption = paste0("Computed live from 01_linelisted_clean.rds, 01_dedup_summary.rds and 03_model_a_dataset.rds.\n", known_issues_lab)) +
-    theme_diss(11) +
+    labs(x = NULL, y = "Row count") +
+    theme_diss(12) +
     theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
 } else {
   fig_3_2 <- placeholder_plot("MISSING INPUT\n01_linelisted_clean.rds, 01_dedup_summary.rds or 03_model_a_dataset.rds")
@@ -977,6 +985,7 @@ if (require_file(ll_path, "Figure 3.2b sample waterfall") && require_file(ma_pat
   not_yet_lab <- null_lga_state %>%
     mutate(lab = paste0(state, ": ", comma(n_null_lga), " Null-LGA rows (not yet excluded)")) %>%
     pull(lab) %>% paste(collapse = "  ·  ")
+  artifacts$fig_3_2b_not_yet <- not_yet_lab
   
   fig_3_2b <- ggplot(wf_state, aes(x = step)) +
     geom_rect(aes(xmin = step - 0.4, xmax = step + 0.4,
@@ -988,20 +997,20 @@ if (require_file(ll_path, "Figure 3.2b sample waterfall") && require_file(ma_pat
               colour = "white", family = "serif") +
     geom_text(data = ~subset(.x, type == "exclude" & n > 0),
               aes(y = remaining + n, label = paste0("−", comma(n))),
-              vjust = -0.6, size = 2.3, fontface = "bold", colour = "#C0312D", family = "serif") +
+              vjust = -0.6, size = 2.3, fontface = "bold", colour = "#BA7517", family = "serif") +
     geom_text(aes(y = 0, label = label), vjust = 1.8, size = 1.95, lineheight = 0.85,
               colour = "#333", family = "serif") +
     facet_wrap(~state, scales = "free_y") +
-    scale_fill_manual(values = c("start" = "#1D6FA4", "exclude" = "#C0312D", "end" = "#1D9E75"),
+    # Same colourblind-safe triad as Figure 3.2 -- see note there.
+    scale_fill_manual(values = c("start" = "#1D6FA4", "exclude" = "#BA7517", "end" = "#10243B"),
                       labels = c("start" = "Starting N", "exclude" = "Excluded", "end" = "Analytic sample"),
                       guide = guide_legend(reverse = TRUE)) +
     scale_y_continuous(labels = comma, expand = expansion(mult = c(0.15, 0.15))) +
     scale_x_continuous(breaks = NULL) +
-    labs(x = NULL, y = "Row count",
-         caption = paste0("Computed live from 01_linelisted_clean.rds, 01_dedup_summary_by_state.rds and 03_model_a_dataset.rds.\nNOT YET excluded from either state's sample above: ", not_yet_lab)) +
-    theme_diss(11) +
+    labs(x = NULL, y = "Row count") +
+    theme_diss(12) +
     theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
-          strip.text = element_text(face = "bold", size = 11))
+          strip.text = element_text(face = "bold", size = 12))
 } else {
   fig_3_2b <- placeholder_plot("MISSING INPUT\nsee Figure 3.2b requirements")
 }
@@ -1018,52 +1027,32 @@ coef_a <- tribble(~label, ~estimate, ~se,
                   "Age at registration\n(months)",     a1_age_raw$coef,  a1_age_raw$se,
                   "Female\n(ref: male)",               a1_sex_raw$coef,  a1_sex_raw$se) %>%
   mutate(ci_lo = estimate - 1.96 * se, ci_hi = estimate + 1.96 * se,
-         sig = abs(estimate / se) > 1.96, star = map2_chr(estimate, se, star2),
          label = fct_rev(fct_inorder(label)))
 
 pA33 <- ggplot(coef_a, aes(x = estimate, y = label)) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaa", linewidth = 0.6) +
-  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi, colour = sig), height = 0.15, linewidth = 0.9) +
-  geom_point(aes(fill = sig), shape = 21, size = 3.6, stroke = 0.8, colour = "white") +
-  geom_text(aes(x = ci_hi + 0.004, label = paste0(formatC(estimate, format = "f", digits = 3),
-                                                  if_else(sig, star, " n.s."))), hjust = 0, size = 3.0, family = "serif", colour = "#333") +
-  scale_colour_manual(values = c("TRUE" = col_sig, "FALSE" = col_nonsig), guide = "none") +
-  scale_fill_manual(values = c("TRUE" = col_sig, "FALSE" = "#d5d5d5"), guide = "none") +
-  labs(subtitle = "A. Primary specification (all predictors)", x = "Coefficient (log-odds)", y = NULL) +
-  theme_diss(11) + theme(axis.text.y = element_text(lineheight = 0.9))
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.15, linewidth = 0.9, colour = col_sig) +
+  geom_point(shape = 21, size = 3.6, stroke = 0.8, colour = "white", fill = col_sig) +
+  labs(subtitle = "A. Primary specification (all predictors)", x = "Coefficient (log-odds), 95% CI", y = NULL) +
+  theme_diss(12) + theme(axis.text.y = element_text(lineheight = 0.9))
 
 coef_b33 <- tribble(~definition, ~estimate, ~se,
                     "Primary\n(penta-ZD flag)",    a1_dist_raw$coef, a1_dist_raw$se,
                     "Strict\n(no vaccine at all)", a2_dist_raw$coef, a2_dist_raw$se) %>%
   mutate(ci_lo = estimate - 1.96 * se, ci_hi = estimate + 1.96 * se,
-         sig = abs(estimate / se) > 1.96, star = map2_chr(estimate, se, star2),
          definition = fct_rev(fct_inorder(definition)))
 
 amplification <- round(a2_dist_raw$coef / a1_dist_raw$coef, 1)
 
 pB33 <- ggplot(coef_b33, aes(x = estimate, y = definition)) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaa", linewidth = 0.6) +
-  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi, colour = sig), height = 0.12, linewidth = 1.0) +
-  geom_point(aes(fill = sig), shape = 21, size = 4.4, stroke = 0.9, colour = "white") +
-  geom_text(aes(x = ci_hi + 0.03, label = paste0("β = ", formatC(estimate, format = "f", digits = 3),
-                                                 if_else(sig, star, " n.s."))), hjust = 0, size = 3.2, family = "serif",
-            fontface = "bold", colour = "#333") +
-  annotate("text", x = max(coef_b33$ci_hi, na.rm = TRUE) * 0.55, y = 1.62,
-           label = paste0(amplification, "× amplification"), size = 3.2,
-           family = "serif", fontface = "italic", colour = "#4d4d4d") +
-  scale_colour_manual(values = c("TRUE" = col_strict, "FALSE" = col_nonsig), guide = "none") +
-  scale_fill_manual(values = c("TRUE" = col_strict, "FALSE" = "#d5d5d5"), guide = "none") +
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.12, linewidth = 1.0, colour = col_strict) +
+  geom_point(shape = 21, size = 4.4, stroke = 0.9, colour = "white", fill = col_strict) +
   labs(subtitle = "B. Distance coefficient by zero-dose definition",
-       x = "Coefficient on distance (log-odds)", y = NULL) +
-  theme_diss(11) + theme(axis.text.y = element_text(lineheight = 0.9))
+       x = "Coefficient on distance (log-odds), 95% CI", y = NULL) +
+  theme_diss(12) + theme(axis.text.y = element_text(lineheight = 0.9))
 
-fig_3_3 <- (pA33 / pB33) + plot_annotation(
-  subtitle = paste0("95% confidence intervals · LGA fixed effects · Ward-clustered SE · N = ", a_n),
-  caption = paste0("Panel A: blue = significant at p < 0.05. Panel B: amber = significant at p < 0.01; grey = not significant.\n",
-                   "Distance coefficient is ", amplification, "x larger under the strict definition than the primary one. Computed live from 01_model_a_zerodose_predictors.txt."),
-  theme = theme(plot.title = element_text(family = "serif", face = "bold", size = 12.5),
-                plot.subtitle = element_text(family = "serif", size = 10, colour = "#4d4d4d"),
-                plot.caption = element_text(family = "serif", size = 10, colour = "#595959", hjust = 0, lineheight = 1.15)))
+fig_3_3 <- (pA33 / pB33)
 
 fig_titles[["fig_3_3"]] <- "Figure 3.3.  Zero-dose model — primary specification and definitional amplification"
 artifacts$fig_3_3_path <- save_fig(fig_3_3, "fig_3_3", width = 8.4, height = 5.4)
@@ -1082,8 +1071,9 @@ if (require_file(wr_path, "Figure 3.4 ward residuals")) {
   # remaining duplicate/near-duplicate rows can easily trigger. arrange()
   # + factor(levels = unique(...)) sorts the same way but never depends on
   # every label being unique to a single row.
-  wr_top <- wr %>% slice_max(residual, n = 12) %>%
-    mutate(ward_lab = paste0(facility_ward, "  (", str_remove(lga_name, " LGA"), ", ", str_sub(state, 1, 3), ")"),
+  wr_top <- wr %>%
+    group_by(state) %>% slice_max(residual, n = 6) %>% ungroup() %>%
+    mutate(ward_lab = paste0(facility_ward, "  (", str_remove(lga_name, " LGA"), ", ", state, ")"),
            provisional = state == "Katsina" & lga_name %in% dup_lgas,
            flag_lab = if_else(provisional, "Katsina, duplication-affected list", "Not flagged")) %>%
     arrange(residual) %>%
@@ -1097,10 +1087,8 @@ if (require_file(wr_path, "Figure 3.4 ward residuals")) {
     scale_fill_manual(values = c("Katsina, duplication-affected list" = "#C0312D", "Not flagged" = "#1D6FA4")) +
     scale_size_continuous(range = c(2.5, 7), guide = "none") +
     scale_x_continuous(labels = label_number(suffix = " pp")) +
-    labs(subtitle = "Observed minus predicted ZD rate · top 12 wards · dot size = enrolled children",
-         x = "Residual above model prediction (percentage points)", y = NULL,
-         caption = "Computed live from 04_ward_residuals_classified.csv. Red points fall in Katsina LGAs on the duplication-affected\nfacility list (Fig 2.2) and may reflect recording artefacts rather than genuine unmet need.") +
-    theme_diss(11) + theme(axis.text.y = element_text(size = 9))
+    labs(x = "Residual above model prediction (percentage points)", y = NULL) +
+    theme_diss(12) + theme(axis.text.y = element_text(size = 10))
 } else {
   fig_3_4 <- placeholder_plot("MISSING INPUT\n04_ward_residuals_classified.csv")
 }
@@ -1156,31 +1144,38 @@ if (map_boundaries_loaded && require_file(resid_classified_path, "Figure 3.4b wa
       filter(!is.na(mean_resid)) %>%
       mutate(label = paste0(NAME_2, " (+", round(mean_resid, 1), "pp)"))
     
-    extent_34b <- bbox_with_buffer(kk_states, 0.06)
+    # Cropped to the wards actually plotted rather than the full state
+    # outline, for the same reason as Figure 1.1's extent above.
+    extent_34b <- bbox_with_buffer(resid_sf_34b, 0.12)
     resid_range_34b <- max(abs(resid_sf_34b$residual), na.rm = TRUE)
     
+    # Larger points drawn first so smaller ones sit on top and are not
+    # hidden underneath -- z-order otherwise follows row order, which is
+    # arbitrary. Points get a white outline (shape 21) so mid-range,
+    # near-zero residuals stay visible against the pale basemap rather
+    # than blending into a grey-on-grey wash.
+    resid_sf_34b <- resid_sf_34b %>% arrange(desc(n_ward))
+    
     fig_3_4b <- ggplot() +
-      geom_sf(data = bounds_geo$adm1, fill = "#F2F2F2", colour = "white", linewidth = 0.15) +
-      geom_sf(data = kk_states, fill = "#FAFAF7", colour = "#10243B", linewidth = 0.5) +
+      geom_sf(data = bounds_geo$adm1, fill = "#EDEDED", colour = "white", linewidth = 0.15) +
+      geom_sf(data = kk_states, fill = "#FFFFFF", colour = "#10243B", linewidth = 0.5) +
       geom_sf(data = kk_lgas, fill = NA, colour = "#9AA7B4", linewidth = 0.2) +
-      geom_sf(data = resid_sf_34b, aes(size = n_ward, colour = residual), alpha = 0.8) +
+      geom_sf(data = resid_sf_34b, aes(size = n_ward, fill = residual), shape = 21,
+              colour = "white", stroke = 0.35, alpha = 0.9) +
       geom_lga_labels(labels_34b, "label") +
       # Binned diverging scale, not a continuous gradient -- otherwise
       # anything short of the most extreme residuals reads as the same
       # washed-out pale grey (a ward at +2pp and one at +8pp become nearly
       # indistinguishable). Steps keep every band visibly separated.
-      scale_colour_steps2(low = "#1D6FA4", mid = "#EFEFE5", high = "#C0312D", midpoint = 0,
-                          limits = c(-resid_range_34b, resid_range_34b),
-                          breaks = scales::breaks_pretty(n = 6)(c(-resid_range_34b, resid_range_34b)),
-                          name = "Residual (observed\nminus predicted ZD, pp)",
-                          guide = steps_guide(barwidth = 6.5)) +
+      # Midpoint fixed at zero, with the white point outline above providing
+      # additional contrast against the basemap for near-zero residuals.
+      scale_fill_steps2(low = "#1D6FA4", mid = "#D9D9D9", high = "#C0312D", midpoint = 0,
+                        limits = c(-resid_range_34b, resid_range_34b),
+                        breaks = scales::breaks_pretty(n = 6)(c(-resid_range_34b, resid_range_34b)),
+                        name = "Residual (observed\nminus predicted ZD, pp)",
+                        guide = steps_guide(barwidth = 6.5)) +
       scale_size_continuous(name = "Children in\nward (N)", range = c(1.5, 11), labels = comma) +
       coord_sf(xlim = extent_34b$xlim, ylim = extent_34b$ylim, expand = FALSE, clip = "off") +
-      labs(caption = paste0(
-        "Each point is one ward (04_ward_residuals_classified.rds), randomly placed within its correct LGA -- not a\n",
-        "true coordinate. Red = higher observed zero-dose rate than the model predicts; blue = lower. Labelled LGAs\n",
-        "are the top 3 by mean residual. As discussed in IV.C, a large residual here is a candidate for field\n",
-        "verification, not a confirmed allocation priority. Administrative boundaries: GADM v4.1 (gadm.org).")) +
       theme_map_diss(12)
   }
 } else {
@@ -1221,27 +1216,27 @@ if (require_file(mb_path, "Figure 3.5 tracing outcomes")) {
     scale_y_continuous(labels = label_number(suffix = "%"), expand = expansion(mult = c(0, 0.02))) +
     facet_wrap(~state) +
     labs(subtitle = "A. Tracing outcome by contact method", x = NULL, y = "Share of attempts") +
-    theme_diss(11)
+    theme_diss(12)
   
   lag_meds <- lag_d %>% group_by(rec) %>% summarise(med = median(days_since_visit, na.rm = TRUE), .groups = "drop")
+  # Median labels are anchored to a fixed point in the plot's empty upper-right
+  # corner rather than to each vline's own x-position, which is what caused
+  # them to sit on top of the histogram bars when a median fell in the dense
+  # part of the distribution.
+  lag_lab_x <- max(lag_d$days_since_visit, na.rm = TRUE) * 0.97
   pR35 <- ggplot(lag_d, aes(x = days_since_visit, fill = rec)) +
     geom_histogram(bins = 38, position = "identity", alpha = 0.55, colour = NA) +
     geom_vline(data = lag_meds, aes(xintercept = med, colour = rec), linetype = "dashed", linewidth = 0.8) +
-    geom_text(data = lag_meds, aes(x = med, colour = rec, label = paste0(rec, "\nmedian ", med, " d")),
-              y = Inf, vjust = c(1.4, 3.0), hjust = -0.05, size = 2.7,
+    geom_text(data = lag_meds, aes(colour = rec, label = paste0(rec, ": median ", med, " d")),
+              x = lag_lab_x, y = Inf, vjust = c(1.6, 3.4), hjust = 1, size = 2.9,
               family = "serif", fontface = "bold", show.legend = FALSE) +
     scale_fill_manual(values = c("Recovered" = col_confirmed, "Not recovered" = col_notrec)) +
     scale_colour_manual(values = c("Recovered" = col_confirmed, "Not recovered" = col_notrec), guide = "none") +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "B. Days since last visit, by recovery", x = "Days since last facility visit", y = "Attempts") +
-    theme_diss(11)
+    theme_diss(12)
   
-  fig_3_5 <- (pL35 | pR35) + plot_layout(widths = c(1.25, 1)) +
-    plot_annotation(
-      subtitle = paste0("N = ", comma(nrow(d35)), " tracing attempts, lag-time subset N = ", comma(nrow(lag_d))),
-      caption = "Computed live from 03_model_b_dataset.rds. Panel A: outcomes as share of attempts within each method and state.\nPanel B: lag-time subset only (children with a matched prior facility visit).",
-      theme = theme(plot.title = element_text(family = "serif", face = "bold", size = 12.5),
-                    plot.caption = element_text(family = "serif", size = 10, colour = "#595959", hjust = 0, lineheight = 1.15)))
+  fig_3_5 <- (pL35 | pR35) + plot_layout(widths = c(1.25, 1))
   fig_titles[["fig_3_5"]] <- "Figure 3.5.  Tracing outcomes and timing"
 } else {
   fig_3_5 <- placeholder_plot("MISSING INPUT\n03_model_b_dataset.rds")
@@ -1272,21 +1267,14 @@ coef_r36 <- tribble(~label, ~estimate, ~se,
                     "Age at tracing\n(months)",               b1_age_raw$coef,  b1_age_raw$se,
                     "Days since\nlast visit",                 b1_lag_raw$coef,  b1_lag_raw$se) %>%
   mutate(ci_lo = estimate - 1.96 * se, ci_hi = estimate + 1.96 * se,
-         sig = abs(estimate / se) > 1.96, star = map2_chr(estimate, se, star2),
          label = fct_rev(fct_inorder(label)))
 
 fig_3_6 <- ggplot(coef_r36, aes(x = estimate, y = label)) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaa", linewidth = 0.6) +
-  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi, colour = sig), height = 0.16, linewidth = 0.9) +
-  geom_point(aes(fill = sig), shape = 21, size = 3.8, stroke = 0.8, colour = "white") +
-  geom_text(aes(x = ci_hi + 0.02, label = paste0(formatC(estimate, format = "f", digits = 3),
-                                                 if_else(sig, star, " n.s."))), hjust = 0, size = 3.1, family = "serif", colour = "#333") +
-  scale_colour_manual(values = c("TRUE" = "#BA7517", "FALSE" = col_nonsig), guide = "none") +
-  scale_fill_manual(values = c("TRUE" = "#BA7517", "FALSE" = "#d5d5d5"), guide = "none") +
-  labs(subtitle = paste0("Outcome: confirmed in-network return · LGA fixed effects · LGA-clustered SE · N = ", b_n),
-       x = "Coefficient (log-odds scale)", y = NULL,
-       caption = "Computed live from 02_model_b_tracing_effectiveness.txt. Amber = significant at p < 0.01. Grey = not significant.") +
-  theme_diss(11) + theme(axis.text.y = element_text(lineheight = 0.9))
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.16, linewidth = 0.9, colour = "#BA7517") +
+  geom_point(shape = 21, size = 3.8, stroke = 0.8, colour = "white", fill = "#BA7517") +
+  labs(x = "Coefficient (log-odds scale), 95% CI", y = NULL) +
+  theme_diss(12) + theme(axis.text.y = element_text(lineheight = 0.9))
 
 fig_titles[["fig_3_6"]] <- "Figure 3.6.  Recovery model — coefficient plot"
 artifacts$fig_3_6_path <- save_fig(fig_3_6, "fig_3_6", width = 8, height = 3.8)
@@ -1319,10 +1307,8 @@ if (require_file(mb_path, "Figure 3.7 strict vs permissive recovery")) {
     scale_y_continuous(limits = c(0, 100), labels = label_number(suffix = "%"), expand = expansion(mult = c(0, 0.05))) +
     scale_x_discrete(expand = expansion(add = c(0.6, 0.95))) +
     facet_wrap(~state) +
-    labs(subtitle = "Strict = confirmed in-network return · Permissive = including unverified off-network reports",
-         x = NULL, y = "Recovery rate",
-         caption = "Computed live from 03_model_b_dataset.rds. The gap is the share of reported recovery resting on unverifiable\noff-network claims.") +
-    theme_diss(11)
+    labs(x = NULL, y = "Recovery rate") +
+    theme_diss(12)
 } else {
   fig_3_7 <- placeholder_plot("MISSING INPUT\n03_model_b_dataset.rds")
 }
@@ -1383,25 +1369,24 @@ if (map_boundaries_loaded && require_file(dt_clean_path_37b, "Figure 3.7b off-ne
       filter(!is.na(share)) %>%
       mutate(label = paste0(NAME_2, " (", share, "%)"))
     
-    extent_37b <- bbox_with_buffer(kk_states, 0.06)
+    # Cropped to the wards actually plotted rather than the full state
+    # outline, for the same reason as Figure 1.1's extent above.
+    extent_37b <- bbox_with_buffer(ward_offnet_37b_sf, 0.12)
     
     fig_3_7b <- ggplot() +
       geom_sf(data = bounds_geo$adm1, fill = "#F2F2F2", colour = "white", linewidth = 0.15) +
       geom_sf(data = kk_states, fill = "#FAFAF7", colour = "#10243B", linewidth = 0.5) +
       geom_sf(data = kk_lgas, fill = NA, colour = "#9AA7B4", linewidth = 0.2) +
-      geom_sf(data = ward_offnet_37b_sf, aes(size = n_recovered, colour = offnet_share), alpha = 0.75) +
+      geom_sf(data = ward_offnet_37b_sf, aes(size = n_recovered, colour = offnet_share), alpha = 0.85) +
       geom_lga_labels(labels_37b, "label") +
-      scale_colour_steps(low = "#1D9E75", high = "#C0312D", name = "Off-network share\nof recovery (%)",
-                         breaks = scales::breaks_pretty(n = 5), labels = label_number(suffix = "%"),
-                         guide = steps_guide()) +
+      # Single-hue viridis scale replaces the earlier green-to-red gradient,
+      # which was difficult to read for colourblind viewers and had a hard-
+      # to-distinguish midrange (~30-70%).
+      scale_colour_viridis_b(option = "viridis", name = "Off-network share\nof recovery (%)",
+                             breaks = scales::breaks_pretty(n = 5), labels = label_number(suffix = "%"),
+                             guide = steps_guide()) +
       scale_size_continuous(name = "Recovered cases\n(N, ward)", range = c(1.5, 11), labels = comma) +
       coord_sf(xlim = extent_37b$xlim, ylim = extent_37b$ylim, expand = FALSE, clip = "off") +
-      labs(caption = paste0(
-        "Each point is one ward with at least 5 recovered cases (01_defaultertracing_clean.rds), randomly placed\n",
-        "within its correct LGA -- not a true coordinate. Colour is the share of recovered cases confirmed only by\n",
-        "unverified off-network report rather than a confirmed in-network vaccination (II.A / III.B.ii). Labelled\n",
-        "LGAs are the top 3 by this share, among LGAs with at least 20 recovered cases. Administrative boundaries:\n",
-        "GADM v4.1 (gadm.org).")) +
       theme_map_diss(12)
   }
 } else {
@@ -1420,38 +1405,34 @@ if (require_file(pj_path, "Figure 3.8 daily visit diagnostics")) {
   pj38 <- readRDS(pj_path) %>% mutate(vd = as.Date(visit_date))
   
   hist_means <- pj38 %>% group_by(lga_clean) %>% summarise(mv = mean(n_visits, na.rm = TRUE), .groups = "drop")
+  hist_lab_x <- max(pj38$n_visits, na.rm = TRUE) * 0.97
   p_hist <- ggplot(pj38, aes(x = n_visits, fill = lga_clean)) +
     geom_histogram(bins = 45, position = "identity", alpha = 0.55, colour = NA) +
     geom_vline(data = hist_means, aes(xintercept = mv, colour = lga_clean), linetype = "dashed", linewidth = 0.8, show.legend = FALSE) +
-    geom_text(data = hist_means, aes(x = mv, colour = lga_clean, label = paste0(lga_clean, "\nmean ", round(mv), " /day")),
-              y = Inf, vjust = c(1.4, 3.0), hjust = -0.05, size = 2.4, family = "serif", fontface = "bold", show.legend = FALSE) +
-    scale_fill_manual(values = c("Gabasawa" = "#1D6FA4", "Ungogo" = "#BA7517")) +
+    geom_text(data = hist_means, aes(colour = lga_clean, label = paste0(lga_clean, ": mean ", round(mv), " /day")),
+              x = hist_lab_x, y = Inf, vjust = c(1.6, 3.4), hjust = 1, size = 2.9, family = "serif", fontface = "bold", show.legend = FALSE) +
+    scale_fill_manual(values = c("Gabasawa" = "#1D6FA4", "Ungogo" = "#BA7517"), name = "LGA") +
     scale_colour_manual(values = c("Gabasawa" = "#1D6FA4", "Ungogo" = "#BA7517"), guide = "none") +
     scale_y_continuous(labels = comma) +
-    labs(subtitle = "A. Visit count distribution", x = "Daily visits", y = "LGA-days") + theme_diss(10)
+    labs(subtitle = "A. Visit count distribution", x = "Daily visits", y = "LGA-days") + theme_diss(12)
   
   dow_lab <- c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
   p_dow <- pj38 %>% group_by(dow_num) %>% summarise(mv = mean(n_visits, na.rm = TRUE), .groups = "drop") %>%
     mutate(dl = factor(dow_lab[dow_num], levels = dow_lab), wk = dow_num %in% c(1, 6, 7)) %>%
     ggplot(aes(x = dl, y = mv, fill = wk)) + geom_col(width = 0.6, alpha = 0.9) +
-    scale_fill_manual(values = c("TRUE" = "#C0312D", "FALSE" = "#1D6FA4"), guide = "none") +
-    labs(subtitle = "B. Mean visits by weekday", x = NULL, y = "Mean visits") + theme_diss(10) +
-    theme(axis.text.x = element_text(size = 8))
+    scale_fill_manual(values = c("TRUE" = "#C0312D", "FALSE" = "#1D6FA4"),
+                      labels = c("TRUE" = "Weekend / Friday", "FALSE" = "Weekday"), name = NULL) +
+    labs(subtitle = "B. Mean visits by weekday", x = NULL, y = "Mean visits") + theme_diss(12) +
+    theme(axis.text.x = element_text(size = 10))
   
   p_zero <- pj38 %>% mutate(ym = floor_date(vd, "month"), z = as.integer(n_visits == 0)) %>%
     group_by(ym) %>% summarise(zd = sum(z), .groups = "drop") %>%
     ggplot(aes(x = ym, y = zd)) + geom_col(fill = "#BA7517", alpha = 0.8, width = 22) +
     scale_x_date(date_breaks = "4 months", date_labels = "%b %y") +
-    labs(subtitle = "C. Zero-visit days per month", x = NULL, y = "Zero-visit days") + theme_diss(10) +
-    theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 8))
+    labs(subtitle = "C. Zero-visit days per month", x = NULL, y = "Zero-visit days") + theme_diss(12) +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 10))
   
-  fig_3_8 <- (p_hist | p_dow | p_zero) +
-    plot_annotation(
-      subtitle = "Kano · Ungogo and Gabasawa · Aug 2024 – Mar 2026",
-      caption = "Computed live from 06_panel_daily.rds. Counts are zero-inflated and right-skewed (A). Quiet days cluster on weekends (B)\nand around religious holidays, a calendar-driven rather than weather-driven pattern that motivates the null weather findings.",
-      theme = theme(plot.title = element_text(family = "serif", face = "bold", size = 12.5),
-                    plot.subtitle = element_text(family = "serif", size = 10, colour = "#4d4d4d"),
-                    plot.caption = element_text(family = "serif", size = 10, colour = "#595959", hjust = 0, lineheight = 1.15)))
+  fig_3_8 <- (p_hist | p_dow | p_zero)
   fig_titles[["fig_3_8"]] <- "Figure 3.8.  Daily facility visit diagnostics"
 } else {
   fig_3_8 <- placeholder_plot("MISSING INPUT\n06_panel_daily.rds")
@@ -1517,11 +1498,11 @@ w6_n <- fb(ev(ndvi_nb_parsed, "Num.Obs", 3), "NA");   w6_r2 <- fb(ev(ndvi_nb_par
 
 tab_weather <- tribble(~Spec, ~Variable, ~Measure, ~Coef_CI, ~Panel, ~FE, ~N, ~R2,
                        "W1", "Precipitation", "Monthly precipitation anomaly (% of long-term average)", ci_cell(w1$coef, w1$se), "Monthly", "LGA", w1_n, w1_r2,
-                       "W2", "Precipitation", "Daily precipitation anomaly (% of long-term average)",   ci_cell(w2$coef, w2$se), "Daily",   "LGA, DOW, month-year", w2_n, w2_r2,
-                       "W3", "Heat", "Extreme heat day (UTCI ≥ 38°C, binary)",                ci_cell(w3$coef, w3$se), "Daily",   "LGA, DOW, month-year", w3_n, w3_r2,
-                       "W4", "Heat", "Daytime mean UTCI (°C, centred)",                            ci_cell(w4$coef, w4$se), "Daily",   "LGA, DOW, month-year", w4_n, w4_r2,
-                       "W5", "Vegetation", "NDVI seasonal level (vim, centred)",                        ci_cell(w5$coef, w5$se), "Monthly", "LGA", w5_n, w5_r2,
-                       "W6", "Vegetation", "NDVI within-baseline anomaly (viq, centred)",               ci_cell(w6$coef, w6$se), "Monthly", "LGA, month-year", w6_n, w6_r2)
+                       "W2", "Precipitation", "Daily precipitation anomaly (% of long-term average)",   ci_cell(w2$coef, w2$se), "Daily",   "LGA, day-of-week, month-year", w2_n, w2_r2,
+                       "W3", "Heat", "Extreme heat day (Universal Thermal Climate Index ≥ 38°C, binary)", ci_cell(w3$coef, w3$se), "Daily",   "LGA, day-of-week, month-year", w3_n, w3_r2,
+                       "W4", "Heat", "Daytime mean Universal Thermal Climate Index (°C, centred)", ci_cell(w4$coef, w4$se), "Daily",   "LGA, day-of-week, month-year", w4_n, w4_r2,
+                       "W5", "Vegetation", "NDVI seasonal level (centred on multi-year mean)",         ci_cell(w5$coef, w5$se), "Monthly", "LGA", w5_n, w5_r2,
+                       "W6", "Vegetation", "NDVI within-baseline anomaly (centred, month-year adjusted)", ci_cell(w6$coef, w6$se), "Monthly", "LGA, month-year", w6_n, w6_r2)
 artifacts$tab_weather <- tab_weather
 
 ########################################
@@ -1637,12 +1618,12 @@ ndvi_viq_off    <- extract_coef_se(ndvi_rob_parsed, "viq_c", col = 3)
 ndvi_spline_sig <- spline_any_sig(ndvi_rob_parsed, "vim_c", col = 4)
 
 tab_weather_robustness <- tribble(
-  ~Variable, ~Term, ~Original_CI, ~Offset_CI, ~NB_offset_CI, ~Spline_check,
-  "Precipitation (daily, P4)",   "precip_anomaly_pct", ci_cell(w2_orig$coef, w2_orig$se), ci_cell(precip_off$coef, precip_off$se), ci_cell(precip_nb_off$coef, precip_nb_off$se), precip_spline_sig,
-  "Heat, binary (D3)",           "extreme_heat_38",    ci_cell(w3_orig$coef, w3_orig$se), ci_cell(heat_bin_off$coef, heat_bin_off$se), ci_cell(heat_bin_nb_off$coef, heat_bin_nb_off$se), "N/A — binary term, no spline built",
-  "Heat, continuous UTCI (D4)",  "utci_dt_c",           ci_cell(w4_orig$coef, w4_orig$se), ci_cell(heat_cont_off$coef, heat_cont_off$se), "N/A — NB-offset only built for binary heat (D3)", heat_spline_sig,
-  "NDVI, vim level (N4)",        "vim_c",               ci_cell(w5b_orig$coef, w5b_orig$se), ci_cell(ndvi_vim_off$coef, ndvi_vim_off$se), ci_cell(ndvi_vim_nb_off$coef, ndvi_vim_nb_off$se), ndvi_spline_sig,
-  "NDVI, viq anomaly (N2)",      "viq_c",               ci_cell(w6_orig$coef, w6_orig$se), ci_cell(ndvi_viq_off$coef, ndvi_viq_off$se), "N/A — NB-offset only built for vim (N4)", "N/A — no spline built for viq"
+  ~Variable, ~Original_CI, ~Offset_CI, ~NB_offset_CI, ~Non_linearity_check,
+  "Precipitation (daily anomaly)",                ci_cell(w2_orig$coef, w2_orig$se), ci_cell(precip_off$coef, precip_off$se), ci_cell(precip_nb_off$coef, precip_nb_off$se), precip_spline_sig,
+  "Heat (extreme-heat-day threshold)",            ci_cell(w3_orig$coef, w3_orig$se), ci_cell(heat_bin_off$coef, heat_bin_off$se), ci_cell(heat_bin_nb_off$coef, heat_bin_nb_off$se), "N/A — binary term, no non-linearity check built",
+  "Heat (continuous UTCI)",                       ci_cell(w4_orig$coef, w4_orig$se), ci_cell(heat_cont_off$coef, heat_cont_off$se), "N/A — negative-binomial offset only built for the binary heat threshold", heat_spline_sig,
+  "Vegetation (NDVI seasonal level)",             ci_cell(w5b_orig$coef, w5b_orig$se), ci_cell(ndvi_vim_off$coef, ndvi_vim_off$se), ci_cell(ndvi_vim_nb_off$coef, ndvi_vim_nb_off$se), ndvi_spline_sig,
+  "Vegetation (NDVI within-baseline anomaly)",    ci_cell(w6_orig$coef, w6_orig$se), ci_cell(ndvi_viq_off$coef, ndvi_viq_off$se), "N/A — negative-binomial offset only built for NDVI seasonal level", "N/A — no non-linearity check built for this term"
 )
 artifacts$tab_weather_robustness <- tab_weather_robustness
 
@@ -1664,50 +1645,34 @@ artifacts$tab_weather_robustness <- tab_weather_robustness
 
 rob_coef_rows <- tribble(
   ~variable, ~spec, ~coef, ~se,
-  "Precipitation\n(P4, daily)", "Original",  w2_orig$coef,        w2_orig$se,
-  "Precipitation\n(P4, daily)", "Offset",    precip_off$coef,     precip_off$se,
-  "Precipitation\n(P4, daily)", "NB-offset", precip_nb_off$coef,  precip_nb_off$se,
-  "Heat, binary\n(D3)",         "Original",  w3_orig$coef,        w3_orig$se,
-  "Heat, binary\n(D3)",         "Offset",    heat_bin_off$coef,   heat_bin_off$se,
-  "Heat, binary\n(D3)",         "NB-offset", heat_bin_nb_off$coef, heat_bin_nb_off$se,
-  "Heat, UTCI\n(D4, continuous)", "Original", w4_orig$coef,       w4_orig$se,
-  "Heat, UTCI\n(D4, continuous)", "Offset",   heat_cont_off$coef, heat_cont_off$se,
-  "NDVI, vim\n(N4, level)",     "Original",  w5b_orig$coef,       w5b_orig$se,
-  "NDVI, vim\n(N4, level)",     "Offset",    ndvi_vim_off$coef,   ndvi_vim_off$se,
-  "NDVI, vim\n(N4, level)",     "NB-offset", ndvi_vim_nb_off$coef, ndvi_vim_nb_off$se,
-  "NDVI, viq\n(N2, anomaly)",   "Original",  w6_orig$coef,        w6_orig$se,
-  "NDVI, viq\n(N2, anomaly)",   "Offset",    ndvi_viq_off$coef,   ndvi_viq_off$se
+  "Precipitation\n(daily)", "Original",  w2_orig$coef,        w2_orig$se,
+  "Precipitation\n(daily)", "Offset",    precip_off$coef,     precip_off$se,
+  "Precipitation\n(daily)", "NB-offset", precip_nb_off$coef,  precip_nb_off$se,
+  "Heat\n(binary threshold)",         "Original",  w3_orig$coef,        w3_orig$se,
+  "Heat\n(binary threshold)",         "Offset",    heat_bin_off$coef,   heat_bin_off$se,
+  "Heat\n(binary threshold)",         "NB-offset", heat_bin_nb_off$coef, heat_bin_nb_off$se,
+  "Heat\n(continuous UTCI)", "Original", w4_orig$coef,       w4_orig$se,
+  "Heat\n(continuous UTCI)", "Offset",   heat_cont_off$coef, heat_cont_off$se,
+  "NDVI\n(seasonal level)",     "Original",  w5b_orig$coef,       w5b_orig$se,
+  "NDVI\n(seasonal level)",     "Offset",    ndvi_vim_off$coef,   ndvi_vim_off$se,
+  "NDVI\n(seasonal level)",     "NB-offset", ndvi_vim_nb_off$coef, ndvi_vim_nb_off$se,
+  "NDVI\n(within-baseline anomaly)",   "Original",  w6_orig$coef,        w6_orig$se,
+  "NDVI\n(within-baseline anomaly)",   "Offset",    ndvi_viq_off$coef,   ndvi_viq_off$se
 ) %>%
   mutate(
     ci_lo = coef - 1.96 * se, ci_hi = coef + 1.96 * se,
-    sig   = abs(coef / se) > 1.96,
     spec  = factor(spec, levels = c("NB-offset", "Offset", "Original"))
   ) %>%
   filter(!is.na(coef))
 
-spline_annot <- tribble(
-  ~variable, ~lab,
-  "Precipitation\n(P4, daily)",   paste0("Spline: ", precip_spline_sig),
-  "Heat, UTCI\n(D4, continuous)", paste0("Spline: ", heat_spline_sig),
-  "NDVI, vim\n(N4, level)",       paste0("Spline: ", ndvi_spline_sig)
-)
-
-fig_weather_robustness <- ggplot(rob_coef_rows, aes(x = coef, y = spec, colour = sig)) +
+fig_weather_robustness <- ggplot(rob_coef_rows, aes(x = coef, y = spec)) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaa", linewidth = 0.6) +
-  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.18, linewidth = 0.9) +
-  geom_point(size = 2.6) +
-  geom_text(data = spline_annot, aes(x = -Inf, y = 0.55, label = lab), inherit.aes = FALSE,
-            hjust = -0.05, vjust = 1, size = 2.6, family = "serif", fontface = "italic", colour = "#4d4d4d") +
-  scale_colour_manual(values = c("TRUE" = col_sig, "FALSE" = col_nonsig), guide = "none") +
-  facet_wrap(~variable, scales = "free_x", ncol = 3) +
-  labs(x = "Coefficient (log-visits scale)", y = NULL,
-       caption = paste0(
-         "Computed live from 02/06/08_regression_*_robustness_prabin.txt. Blue = significant at p < 0.05, grey = not.\n",
-         "NB-offset uses fenegbin()'s own offset argument (count model, log link) — broadly comparable to the OLS-on-log-\n",
-         "visits Original/Offset specifications but not a fully like-for-like construction. Spline terms (ns(x, df=3), 3 basis\n",
-         "coefficients each) cannot be plotted as a single point — see annotation and tab_weather_robustness for detail.")) +
-  theme_diss(10) +
-  theme(strip.text = element_text(size = 9, face = "bold"), panel.spacing = unit(1.1, "lines"))
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.18, linewidth = 0.9, colour = col_sig) +
+  geom_point(size = 2.8, colour = col_sig) +
+  facet_wrap(~variable, scales = "free_x", ncol = 2) +
+  labs(x = "Coefficient (log-visits scale), 95% CI", y = NULL) +
+  theme_diss(12) +
+  theme(strip.text = element_text(size = 11, face = "bold"), panel.spacing = unit(1.1, "lines"))
 
 fig_titles[["fig_weather_robustness"]] <- "Figure 3.9.  Weather effect estimates across specifications — offset, NB-offset and spline robustness"
 artifacts$fig_weather_robustness_path <- save_fig(fig_weather_robustness, "fig_weather_robustness", width = 10, height = 5.2)
@@ -1789,9 +1754,12 @@ if (weather_maps_ok) {
                        breaks = scales::breaks_pretty(n = 5), labels = comma, guide = steps_guide()) +
       coord_sf(xlim = precip_extent_39b$xlim, ylim = precip_extent_39b$ylim, expand = FALSE, clip = "off") +
       labs(subtitle = "A. Rainfall (CHIRPS)") +
-      theme_map_diss(11) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 12))
+      theme_map_diss(12) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 13))
     
-    heat_extent_39b <- bbox_with_buffer(bounds_geo$adm2 %>% filter(NAME_1 == "Kano"), 0.05)
+    # Cropped to Ungogo and Gabasawa specifically -- the previous version
+    # used all of Kano's ~44 LGAs as the extent basis, even though the
+    # ERA5/UTCI panel this figure draws on covers only these two.
+    heat_extent_39b <- bbox_with_buffer(heat_sf_39b, 0.15)
     heat_labels_39b <- heat_sf_39b %>% st_centroid() %>%
       mutate(label = paste0(NAME_2, " (", round(utci, 1), "°C)"))
     
@@ -1806,8 +1774,8 @@ if (weather_maps_ok) {
                        breaks = scales::breaks_pretty(n = 4), labels = label_number(accuracy = 0.1),
                        guide = steps_guide()) +
       coord_sf(xlim = heat_extent_39b$xlim, ylim = heat_extent_39b$ylim, expand = FALSE, clip = "off") +
-      labs(subtitle = "B. Heat (ERA5/UTCI) -- Kano only, 2 LGAs") +
-      theme_map_diss(11) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 12))
+      labs(subtitle = "B. Heat (ERA5/UTCI)") +
+      theme_map_diss(12) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 13))
     
     ndvi_extent_39b <- bbox_with_buffer(ndvi_sf_39b, 0.08)
     ndvi_labels_39b <- ndvi_sf_39b %>% st_centroid() %>% slice_max(vim, n = 2) %>%
@@ -1818,29 +1786,26 @@ if (weather_maps_ok) {
               fill = "#F7F7F7", colour = "white", linewidth = 0.15) +
       geom_sf(data = ndvi_sf_39b, aes(fill = vim), colour = "white", linewidth = 0.25) +
       geom_lga_labels(ndvi_labels_39b, "label") +
-      # Same legend fix as the heat panel -- VIM values are small decimals
+      # Same legend fix as the heat panel -- NDVI values are small decimals
       # that previously crowded together under a continuous colourbar.
-      scale_fill_steps(low = "#F1E9D2", high = "#2E7D32", name = "Mean vegetation\nindex (VIM)",
+      scale_fill_steps(low = "#F1E9D2", high = "#2E7D32", name = "Mean vegetation\nindex (NDVI)",
                        breaks = scales::breaks_pretty(n = 4), labels = label_number(accuracy = 0.01),
                        guide = steps_guide()) +
       coord_sf(xlim = ndvi_extent_39b$xlim, ylim = ndvi_extent_39b$ylim, expand = FALSE, clip = "off") +
       labs(subtitle = "C. Vegetation greenness (NDVI)") +
-      theme_map_diss(11) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 12))
+      theme_map_diss(12) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 13))
     
-    fig_weather_maps <- (p_precip_39b | p_heat_39b | p_ndvi_39b) +
-      plot_annotation(
-        caption = paste0(
-          "Each map averages the underlying weather variable across its full study window per LGA actually present in\n",
-          "that variable's data (panel B is Kano-only by construction -- see note above). Physical reference for the null\n",
-          "result in III.C/IV.B. Administrative boundaries: GADM v4.1 (gadm.org)."),
-        theme = theme(plot.caption = element_text(family = "serif", size = 9.5, colour = "#595959", hjust = 0, margin = margin(t = 10), lineheight = 1.15)))
+    # 2x2-style grid (one cell left empty) rather than a single cramped row
+    # of three, so each map gets more room -- panels are wide, low-aspect-
+    # ratio choropleths that lose legibility when squeezed side by side.
+    fig_weather_maps <- (p_precip_39b + p_heat_39b + p_ndvi_39b) + plot_layout(ncol = 2)
   }
 } else {
   fig_weather_maps <- placeholder_plot("MISSING INPUT\nsee Figure 3.9b requirements, or GADM boundaries unavailable")
 }
 
 fig_titles[["fig_weather_maps"]] <- "Figure 3.9b.  Weather variables across Kano and Katsina's LGAs"
-artifacts$fig_weather_maps_path <- save_fig(fig_weather_maps, "fig_weather_maps", width = 15, height = 7, dpi = 150)
+artifacts$fig_weather_maps_path <- save_fig(fig_weather_maps, "fig_weather_maps", width = 11, height = 10, dpi = 150)
 
 #----------------------------------------------------------------------------
 
@@ -1975,9 +1940,7 @@ if (require_file(dup_dist_path, "Fig1A duplicate set-size distribution")) {
     geom_col(position = position_dodge(width = 0.7), width = 0.62) +
     scale_fill_manual(values = c("Linelisted (children enrolled)" = "#3498db",
                                  "Facility visits (vaccination records)" = "#e74c3c")) +
-    labs(title = "How many times is the same record being copied via sync?",
-         subtitle = "Katsina only — Kano had no duplicates",
-         x = "Number of times a record appears (duplicate set size)",
+    labs(x = "Number of times a record appears (duplicate set size)",
          y = "Rows created by duplication", fill = NULL) +
     theme_datharm(13) +
     theme(panel.grid.major.x = element_blank(), legend.position = "top")
@@ -2073,8 +2036,13 @@ if (require_file(ladder_path, "Fig2A recovery ladder")) {
       Level = factor(Level, levels = c("L1 — Maximalist", "L2 — Strict", "L3 — Matched", "L4 — Verified")),
       state = factor(state, levels = c("Kano", "Katsina")))
   
-  level_colour <- c("L1 — Maximalist" = "#27ae60", "L2 — Strict" = "#2980b9",
-                    "L3 — Matched" = "#d68910", "L4 — Verified" = "#c0392b")
+  # Sequential blue scale replaces the previous 4-colour categorical
+  # palette (green/blue/orange/red), which paired L1's green against L4's
+  # red -- the hardest combination for red-green colourblind readers.
+  # A single-hue ramp also better reflects that L1-L4 are an ordered,
+  # nested sequence rather than four unrelated categories.
+  level_colour <- c("L1 — Maximalist" = "#AFD1E7", "L2 — Strict" = "#6AA8D8",
+                    "L3 — Matched" = "#2C6FA8", "L4 — Verified" = "#0B3D5C")
   
   # Point-to-point drops between consecutive levels, computed per state
   # rather than typed in, so a change in the underlying data automatically
@@ -2094,18 +2062,21 @@ if (require_file(ladder_path, "Fig2A recovery ladder")) {
     coord_flip(clip = "off") +
     scale_y_continuous(limits = c(0, 100), labels = function(x) paste0(x, "%"), expand = c(0, 0)) +
     scale_fill_manual(values = level_colour, guide = "none") +
-    labs(title = "\"Recovered\" defaulter rate varies widely by definition used",
-         x = NULL, y = "Share of traced defaulters",
-         caption = if (!is.na(ladder_na_lab)) ladder_na_lab else NULL) +
+    labs(x = NULL, y = "Share of traced defaulters") +
     theme_datharm(12.5) +
     theme(plot.margin = margin(5.5, 46, 5.5, 5.5), strip.text = element_text(face = "bold", size = 12))
 } else {
   fig2a_datharm <- placeholder_plot("MISSING INPUT\n09_recovery_ladder.rds")
   drops_datharm <- tibble()
+  ladder_na_lab <- NA_character_
 }
 
 artifacts_datharm$fig2a_path <- save_fig(fig2a_datharm, "datharm_fig2a", width = 8.5, height = 4.6)
 artifacts_datharm$fig2a_drops <- drops_datharm
+# Caveat text (which rows were excluded from each state's denominator for
+# missing tracing_outcome) used to be baked into the plot as a caption --
+# moved here so it can be pulled into the Rmd's fig.cap text instead.
+artifacts_datharm$fig2a_na_lab <- ladder_na_lab
 
 ########################################
 # Table3B — ZD 90-day reconciliation   #
@@ -2192,10 +2163,7 @@ if (require_file(ward_dead_path, "Fig5A ward deceased rate")) {
     scale_fill_manual(values = c("Highest" = "#e74c3c", "Other" = "#b0b0b0"), guide = "none") +
     scale_y_continuous(labels = function(x) paste0(x, "%"), expand = expansion(mult = c(0, 0.08))) +
     coord_flip() +
-    labs(title = "This pattern would be visible in routine data review",
-         subtitle = "It was only found in retrospective analysis",
-         x = NULL, y = "Deceased-at-tracing rate",
-         caption = "Computed live from 09_ward_deceased_rate.rds. 'Highest' marks the ward with the largest rate, not necessarily\nMekiya by name — verify the flagged ward matches the Mekiya finding described in the text before citing it as such.") +
+    labs(x = NULL, y = "Deceased-at-tracing rate") +
     theme_datharm(12.5)
 } else {
   fig5a_datharm <- placeholder_plot("MISSING INPUT\n09_ward_deceased_rate.rds")
@@ -2204,6 +2172,13 @@ if (require_file(ward_dead_path, "Fig5A ward deceased rate")) {
 
 artifacts_datharm$fig5a_path <- save_fig(fig5a_datharm, "datharm_fig5a", width = 8, height = 5.5)
 artifacts_datharm$fig5a_kano_avg <- kano_avg_dead
+# "Highest" flags whichever ward has the largest rate in the current data,
+# which is expected to be Mekiya but isn't guaranteed to stay that way if
+# the underlying data changes -- this verification caveat used to be baked
+# into the plot as a caption; moved here for the Rmd's fig.cap instead.
+artifacts_datharm$fig5a_verify_note <- paste0(
+  "'Highest' marks the ward with the largest rate in the current data, not necessarily Mekiya by name -- ",
+  "verify the flagged ward matches the Mekiya finding described in the text before citing it as such.")
 
 ########################################
 # Fig5B panel 1 — Top 40 facility-day  #
@@ -2219,9 +2194,7 @@ if (require_file(fac_vol_path, "Fig5B facility-day volume")) {
     geom_point(size = 2.4) +
     scale_colour_manual(values = c("30-49" = "#5dade2", "50-99" = "#f0b429",
                                    "100-199" = "#c0392b", "200+" = "#7b241c"), guide = "none") +
-    labs(title = "Highest single-day volumes", subtitle = "Katsina facilities",
-         x = "Rank", y = "Visits / day",
-         caption = "Computed live from 09_facility_day_volume.rds.") +
+    labs(x = "Rank", y = "Visits / day") +
     theme_datharm(12) +
     theme(panel.grid.minor = element_blank())
   
@@ -2236,20 +2209,23 @@ if (require_file(fac_vol_path, "Fig5B facility-day volume")) {
     geom_text(aes(label = paste0(N, " (", Pct, "%)")), hjust = -0.05, size = 3.1) +
     scale_y_continuous(limits = c(0, max(band_dist_datharm$N, na.rm = TRUE) * 1.25), expand = c(0, 0)) +
     coord_flip() +
-    labs(title = "Distribution of all facility-days",
-         subtitle = paste0("n = ", comma(fac_vol_katsina$n_facility_days), " facility-days total"),
-         x = NULL, y = "Facility-days",
-         caption = paste0("Computed live from 09_facility_day_volume.rds. 95th percentile: ", fac_vol_katsina$p95,
-                          "/day. 99th percentile: ", fac_vol_katsina$p99, "/day.")) +
+    labs(x = NULL, y = "Facility-days") +
     theme_datharm(12) +
     theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
 } else {
   fig5b_panel1_datharm <- placeholder_plot("MISSING INPUT\n09_facility_day_volume.rds")
   fig5b_panel2_datharm <- placeholder_plot("MISSING INPUT\n09_facility_day_volume.rds")
+  fac_vol_katsina <- list(n_facility_days = NA, p95 = NA, p99 = NA)
 }
 
 artifacts_datharm$fig5b_panel1_path <- save_fig(fig5b_panel1_datharm, "datharm_fig5b_panel1", width = 8, height = 4)
 artifacts_datharm$fig5b_panel2_path <- save_fig(fig5b_panel2_datharm, "datharm_fig5b_panel2", width = 8, height = 4.5)
+# n and percentile figures used to be baked into panel 2's subtitle/caption;
+# exported here so the Rmd's fig.cap can carry them (and stay in sync with
+# the data on rerun) instead of a hardcoded string.
+artifacts_datharm$fig5b_n_facility_days <- fac_vol_katsina$n_facility_days
+artifacts_datharm$fig5b_p95 <- fac_vol_katsina$p95
+artifacts_datharm$fig5b_p99 <- fac_vol_katsina$p99
 
 ########################################
 # Table6A — Literature evidence table, #
