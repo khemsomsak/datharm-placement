@@ -2,8 +2,8 @@
 #  Child-Level Regression Analysis                     #
 #  ZD Predictors & Tracing Effectiveness               #
 #  Created on 28/5/2026                                #
-#  Last Updated 13/7/2026 — added true full-sample     #
-#  Model B spec to fix the Table 3.1b duplication bug  #
+#  Last Updated 30/7/2026 - added Section 16,          #
+#  distributions and summary statistics for Appendix D #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -290,6 +290,40 @@ data_model_b %>%
   print()
 cat("\n")
 
+#Validate: implausible-age check (added 30/7/2026, per Khem's report on Figure D.1) ----
+# age_months_tracing = age_years * 12 + coalesce(age_months, 0). A single
+# corrupted age_years value (birth-year typo, or age_years accidentally
+# recorded as a full year rather than a child's age in years) is enough to
+# produce an age in the tens of thousands of months. This was caught
+# visually in Figure D.1 (10_visualizations.R), where it compressed nearly
+# every real attempt into one bar. Checked here too, since this same
+# uncapped variable is a raw predictor in m_b1 through m_b4 below, not
+# just a plotting input -- an outlier this extreme can leverage a
+# regression coefficient even inside a fixed-effects specification.
+# Flagged rather than silently excluded: unlike rimi_flag or the GPS
+# >100km rule, there is no existing decision-log entry for what counts as
+# an implausible age here, so the cutoff below (180 months = 15 years) is
+# a plot-only default, not applied to the models. Confirm with Khem
+# whether m_b1-m_b4 should also exclude these rows, and whether the same
+# check is needed on age_months_at_reg for Model A above.
+implausible_age_cutoff <- 180
+n_implausible_age_b <- sum(data_model_b$age_months_tracing > implausible_age_cutoff, na.rm = TRUE)
+cat("Implausible-age check (Model B, age_months_tracing):\n")
+cat("  Max age_months_tracing:       ", round(max(data_model_b$age_months_tracing, na.rm = TRUE), 1), "months\n")
+cat("  Rows > ", implausible_age_cutoff, " months: ", n_implausible_age_b,
+    " of ", nrow(data_model_b), "\n", sep = "")
+if (n_implausible_age_b > 0) {
+  cat("  NOT excluded from m_b1-m_b4 below -- these rows currently remain in\n")
+  cat("  every Model B specification as drafted. Decide with Khem whether to\n")
+  cat("  add an implausible-age exclusion (mirroring rimi_flag / the GPS\n")
+  cat("  >100km rule) before treating those coefficients as final.\n")
+}
+n_implausible_age_a <- sum(data_model_a$age_months_at_reg > implausible_age_cutoff, na.rm = TRUE)
+cat("Implausible-age check (Model A, age_months_at_reg):\n")
+cat("  Max age_months_at_reg:        ", round(max(data_model_a$age_months_at_reg, na.rm = TRUE), 1), "months\n")
+cat("  Rows > ", implausible_age_cutoff, " months: ", n_implausible_age_a,
+    " of ", nrow(data_model_a), "\n\n", sep = "")
+
 # 10b. Model B0: TRUE full sample — no lag-time restriction ------------------
 # FIX (13/7/2026): every Model B spec below includes days_since_visit, and
 # feglm() does complete-case listwise deletion, so m_b1 was already silently
@@ -416,12 +450,314 @@ modelsummary(
   output  = file.path(out_dir, "03_table_3_1b_full_vs_lagtime.txt")
 )
 
-cat("Table 3.1b comparison — sanity check (should now differ):\n")
+cat("Table 3.1b comparison - sanity check (should now differ):\n")
 modelsummary(
   list("Full sample" = m_b0_full, "Lag-time subset" = m_b1),
   stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01)
 )
 cat("\n")
+
+
+#--------------------#Distributions & Summary Statistics#--------------------#
+# Section 16, added 30/7/2026 for Appendix D ("Distributions of the main
+# outcome and predictor variables"). Covers every variable that enters
+# Models A and B: continuous predictors (distance, age, lag time), binary
+# predictors and outcomes (gender, method, ZD flags, recovery flags), and
+# state as the recurring comparison axis throughout this dissertation.
+# Rainfall, heat (UTCI), and NDVI are NOT covered here - those variables
+# and their distributions live in 02_chirps_import_analysis.R,
+# 06_era5_analysis.R, and 08_ndvi_analysis.R respectively, and would need
+# the equivalent block added to each of those scripts if their
+# distributions are wanted in the same appendix.
+
+# 16a. Helper functions ------------------------------------------------------
+# Skewness and kurtosis use the standard Fisher-Pearson moment formulas.
+# Outlier counts use two conventional rules side by side (Tukey's 1.5xIQR
+# fence, and |z| > 3) rather than picking one, since the two can disagree
+# and the disagreement itself is informative about how a variable behaves.
+
+skewness <- function(x) {
+  x <- x[!is.na(x)]
+  m <- mean(x); s <- sd(x); n <- length(x)
+  (sum((x - m)^3) / n) / s^3
+}
+
+kurtosis <- function(x) {
+  x <- x[!is.na(x)]
+  m <- mean(x); s <- sd(x); n <- length(x)
+  (sum((x - m)^4) / n) / s^4 - 3
+}
+
+n_outliers_iqr <- function(x) {
+  x  <- x[!is.na(x)]
+  q1 <- quantile(x, 0.25); q3 <- quantile(x, 0.75); iqr <- q3 - q1
+  sum(x < q1 - 1.5 * iqr | x > q3 + 1.5 * iqr)
+}
+
+n_outliers_zscore <- function(x) {
+  x <- x[!is.na(x)]
+  z <- abs((x - mean(x)) / sd(x))
+  sum(z > 3, na.rm = TRUE)
+}
+
+describe_continuous <- function(df, var, label, group_label = "All") {
+  x <- df[[var]]
+  tibble(
+    group             = group_label,
+    variable          = label,
+    n                 = sum(!is.na(x)),
+    n_missing         = sum(is.na(x)),
+    pct_missing       = round(mean(is.na(x)) * 100, 2),
+    mean              = round(mean(x, na.rm = TRUE), 2),
+    sd                = round(sd(x, na.rm = TRUE), 2),
+    min               = round(min(x, na.rm = TRUE), 2),
+    p25               = unname(round(quantile(x, 0.25, na.rm = TRUE), 2)),
+    median            = round(median(x, na.rm = TRUE), 2),
+    p75               = unname(round(quantile(x, 0.75, na.rm = TRUE), 2)),
+    p95               = unname(round(quantile(x, 0.95, na.rm = TRUE), 2)),
+    max               = round(max(x, na.rm = TRUE), 2),
+    skewness          = round(skewness(x), 2),
+    kurtosis          = round(kurtosis(x), 2),
+    n_outliers_iqr    = n_outliers_iqr(x),
+    n_outliers_zscore = n_outliers_zscore(x)
+  )
+}
+
+describe_categorical <- function(df, var, label, group_label = "All") {
+  # level is coerced to character before counting, since the binary 0/1
+  # flags (integer) and state (character) would otherwise leave bind_rows()
+  # unable to stack the resulting "level" columns into one column of a
+  # single type.
+  df %>%
+    filter(!is.na(.data[[var]])) %>%
+    mutate(level_chr = as.character(.data[[var]])) %>%
+    count(level = level_chr) %>%
+    mutate(
+      group    = group_label,
+      variable = label,
+      pct      = round(n / sum(n) * 100, 1)
+    ) %>%
+    select(group, variable, level, n, pct)
+}
+
+# 16b. Model A distributions - continuous variables --------------------------
+# hf_distance_km and age_months_at_reg, overall and split by state, since
+# Kano/Katsina asymmetry is a running theme throughout this dissertation.
+
+dist_a_continuous <- bind_rows(
+  describe_continuous(data_model_a %>% filter(in_primary_sample),
+                      "hf_distance_km", "HF distance (km)"),
+  describe_continuous(data_model_a %>% filter(in_primary_sample),
+                      "age_months_at_reg", "Age at registration (months)"),
+  describe_continuous(data_model_a %>% filter(in_primary_sample, state == "Kano"),
+                      "hf_distance_km", "HF distance (km)", "Kano"),
+  describe_continuous(data_model_a %>% filter(in_primary_sample, state == "Katsina"),
+                      "hf_distance_km", "HF distance (km)", "Katsina"),
+  describe_continuous(data_model_a %>% filter(in_primary_sample, state == "Kano"),
+                      "age_months_at_reg", "Age at registration (months)", "Kano"),
+  describe_continuous(data_model_a %>% filter(in_primary_sample, state == "Katsina"),
+                      "age_months_at_reg", "Age at registration (months)", "Katsina")
+)
+
+cat("Model A - continuous variable distributions:\n")
+print(dist_a_continuous)
+cat("\n")
+
+# 16c. Model A distributions - categorical variables --------------------------
+
+dist_a_categorical <- bind_rows(
+  describe_categorical(data_model_a %>% filter(in_primary_sample),
+                       "gender_female", "Gender (1 = female)"),
+  describe_categorical(data_model_a %>% filter(in_primary_sample),
+                       "zero_dose_penta", "Zero-dose, primary definition"),
+  describe_categorical(data_model_a %>% filter(in_primary_sample),
+                       "zero_dose_truly", "Zero-dose, truly-ZD definition"),
+  describe_categorical(data_model_a %>% filter(in_primary_sample),
+                       "state", "State")
+)
+
+cat("Model A - categorical variable distributions:\n")
+print(dist_a_categorical)
+cat("\n")
+
+# 16d. Model B distributions - continuous variables ---------------------------
+# age_months_tracing and days_since_visit. days_since_visit is reported on
+# the lag-time subset only, since it is undefined outside it by construction.
+
+dist_b_continuous <- bind_rows(
+  describe_continuous(data_model_b %>% filter(in_primary_sample),
+                      "age_months_tracing", "Age at tracing (months)"),
+  describe_continuous(data_model_b %>% filter(in_primary_sample, !is.na(days_since_visit)),
+                      "days_since_visit", "Days since last facility visit (lag-time subset)"),
+  describe_continuous(data_model_b %>% filter(in_primary_sample, state == "Kano"),
+                      "age_months_tracing", "Age at tracing (months)", "Kano"),
+  describe_continuous(data_model_b %>% filter(in_primary_sample, state == "Katsina"),
+                      "age_months_tracing", "Age at tracing (months)", "Katsina"),
+  describe_continuous(data_model_b %>% filter(in_primary_sample, state == "Kano", !is.na(days_since_visit)),
+                      "days_since_visit", "Days since last facility visit (lag-time subset)", "Kano"),
+  describe_continuous(data_model_b %>% filter(in_primary_sample, state == "Katsina", !is.na(days_since_visit)),
+                      "days_since_visit", "Days since last facility visit (lag-time subset)", "Katsina")
+)
+
+cat("Model B - continuous variable distributions:\n")
+print(dist_b_continuous)
+cat("\n")
+
+# 16e. Model B distributions - categorical variables ---------------------------
+
+dist_b_categorical <- bind_rows(
+  describe_categorical(data_model_b %>% filter(in_primary_sample),
+                       "method_sms", "Tracing method (1 = SMS/phone)"),
+  describe_categorical(data_model_b %>% filter(in_primary_sample),
+                       "recovered_strict", "Recovered, strict definition"),
+  describe_categorical(data_model_b %>% filter(in_primary_sample),
+                       "recovered_permissive", "Recovered, permissive definition"),
+  describe_categorical(data_model_b %>% filter(in_primary_sample),
+                       "child_reached", "Child reached (any contact)"),
+  describe_categorical(data_model_b %>% filter(in_primary_sample),
+                       "state", "State")
+)
+
+cat("Model B - categorical variable distributions:\n")
+print(dist_b_categorical)
+cat("\n")
+
+# 16f. Correlation matrices ---------------------------------------------------
+# Pearson and Spearman side by side for the continuous predictors and their
+# outcome, useful for reviewers checking for multicollinearity concerns or
+# a nonlinear relationship a linear specification would miss.
+
+corr_a_vars <- data_model_a %>%
+  filter(in_primary_sample) %>%
+  select(hf_distance_km, age_months_at_reg, gender_female, zero_dose_penta) %>%
+  drop_na()
+
+corr_a_pearson  <- round(cor(corr_a_vars, method = "pearson"),  2)
+corr_a_spearman <- round(cor(corr_a_vars, method = "spearman"), 2)
+
+corr_b_vars <- data_model_b %>%
+  filter(in_primary_sample) %>%
+  select(hf_distance_km, age_months_tracing, method_sms, recovered_strict) %>%
+  drop_na()
+
+corr_b_pearson  <- round(cor(corr_b_vars, method = "pearson"),  2)
+corr_b_spearman <- round(cor(corr_b_vars, method = "spearman"), 2)
+
+cat("Model A - correlation matrix (Pearson):\n");  print(corr_a_pearson);  cat("\n")
+cat("Model A - correlation matrix (Spearman):\n"); print(corr_a_spearman); cat("\n")
+cat("Model B - correlation matrix (Pearson):\n");  print(corr_b_pearson);  cat("\n")
+cat("Model B - correlation matrix (Spearman):\n"); print(corr_b_spearman); cat("\n")
+
+# 16g. Pre-regression missingness summary -------------------------------------
+# How many rows each key variable was missing BEFORE the filters already
+# applied when data_model_a/data_model_b were built (Section 3 and Section
+# 10 above already drop hf_distance_km == NA and tracing_outcome == NA
+# respectively, so this looks upstream of that, at the raw joined tables).
+
+missingness_summary <- bind_rows(
+  data_ll_clean %>% filter(woman_or_child == "child") %>%
+    summarise(
+      variable    = "hf_distance_km (Model A, pre-filter)",
+      n_total     = n(),
+      n_missing   = sum(is.na(hf_distance_km)),
+      pct_missing = round(mean(is.na(hf_distance_km)) * 100, 2)
+    ),
+  data_ll_clean %>% filter(woman_or_child == "child") %>%
+    summarise(
+      variable    = "age fields, all three (Model A, pre-filter)",
+      n_total     = n(),
+      n_missing   = sum(is.na(age_years) & is.na(age_months) & is.na(age_weeks)),
+      pct_missing = round(mean(is.na(age_years) & is.na(age_months) & is.na(age_weeks)) * 100, 2)
+    ),
+  data_dt_clean %>%
+    summarise(
+      variable    = "tracing_outcome (Model B, pre-filter)",
+      n_total     = n(),
+      n_missing   = sum(is.na(tracing_outcome)),
+      pct_missing = round(mean(is.na(tracing_outcome)) * 100, 2)
+    ),
+  data_dt_clean %>%
+    summarise(
+      variable    = "days_since_visit (Model B, structural - undefined outside lag-time subset)",
+      n_total     = n(),
+      n_missing   = sum(is.na(days_since_visit)),
+      pct_missing = round(mean(is.na(days_since_visit)) * 100, 2)
+    )
+)
+
+cat("Pre-regression missingness summary:\n")
+print(missingness_summary)
+cat("\n")
+
+# 16h. Bundle and write TXT companion -----------------------------------------
+# RDS keeps every object queryable; TXT is a single flat file Khem can
+# upload directly wherever a full R session isn't available.
+
+distributions_summary <- list(
+  model_a_continuous  = dist_a_continuous,
+  model_a_categorical = dist_a_categorical,
+  model_b_continuous  = dist_b_continuous,
+  model_b_categorical = dist_b_categorical,
+  corr_a_pearson      = corr_a_pearson,
+  corr_a_spearman     = corr_a_spearman,
+  corr_b_pearson      = corr_b_pearson,
+  corr_b_spearman     = corr_b_spearman,
+  missingness_summary = missingness_summary
+)
+
+txt_path <- file.path(out_dir, "04_distributions_summary.txt")
+sink(txt_path)
+cat("DISTRIBUTIONS AND SUMMARY STATISTICS - MODELS A AND B\n")
+cat("Generated from 03_regression.R, Section 16\n")
+cat(paste0("Run date: ", Sys.Date(), "\n"))
+cat(strrep("=", 70), "\n\n")
+
+cat("MODEL A - CONTINUOUS VARIABLES (overall and by state)\n")
+cat(strrep("-", 70), "\n")
+print(as.data.frame(dist_a_continuous)); cat("\n\n")
+
+cat("MODEL A - CATEGORICAL VARIABLES\n")
+cat(strrep("-", 70), "\n")
+print(as.data.frame(dist_a_categorical)); cat("\n\n")
+
+cat("MODEL B - CONTINUOUS VARIABLES (overall and by state)\n")
+cat(strrep("-", 70), "\n")
+print(as.data.frame(dist_b_continuous)); cat("\n\n")
+
+cat("MODEL B - CATEGORICAL VARIABLES\n")
+cat(strrep("-", 70), "\n")
+print(as.data.frame(dist_b_categorical)); cat("\n\n")
+
+cat("MODEL A - CORRELATION MATRIX (PEARSON)\n")
+cat(strrep("-", 70), "\n")
+print(corr_a_pearson); cat("\n\n")
+
+cat("MODEL A - CORRELATION MATRIX (SPEARMAN)\n")
+cat(strrep("-", 70), "\n")
+print(corr_a_spearman); cat("\n\n")
+
+cat("MODEL B - CORRELATION MATRIX (PEARSON)\n")
+cat(strrep("-", 70), "\n")
+print(corr_b_pearson); cat("\n\n")
+
+cat("MODEL B - CORRELATION MATRIX (SPEARMAN)\n")
+cat(strrep("-", 70), "\n")
+print(corr_b_spearman); cat("\n\n")
+
+cat("PRE-REGRESSION MISSINGNESS SUMMARY\n")
+cat(strrep("-", 70), "\n")
+print(as.data.frame(missingness_summary)); cat("\n\n")
+
+cat(strrep("=", 70), "\n")
+cat("NOTE: rainfall, heat (UTCI), and NDVI distributions are NOT included\n")
+cat("here. Those variables live in 02_chirps_import_analysis.R,\n")
+cat("06_era5_analysis.R, and 08_ndvi_analysis.R respectively, and would\n")
+cat("need the equivalent Section 16 block added to each script if their\n")
+cat("distributions are wanted in the same appendix.\n")
+sink()
+
+cat("Distributions summary written to:\n")
+cat(" ", txt_path, "\n\n")
 
 
 ##########
@@ -435,13 +771,18 @@ saveRDS(data_model_b,
         file.path(out_dir, "03_model_b_dataset.rds"))
 saveRDS(data_ward_residuals,
         file.path(out_dir, "03_ward_residuals_model_a.rds"))
+saveRDS(distributions_summary,
+        file.path(out_dir, "04_distributions_summary.rds"))
 
 cat("All outputs saved to:", out_dir, "\n")
 cat("  01_model_a_zerodose_predictors.txt\n")
 cat("  02_model_b_tracing_effectiveness.txt\n")
-cat("  03_table_3_1b_full_vs_lagtime.txt   <- NEW, fixes Table 3.1b duplication\n")
+cat("  03_table_3_1b_full_vs_lagtime.txt      <- fixes Table 3.1b duplication\n")
 cat("  03_model_a_dataset.rds\n")
 cat("  03_model_b_dataset.rds\n")
 cat("  03_ward_residuals_model_a.rds\n")
+cat("  04_distributions_summary.rds           <- NEW, Section 16, for Appendix D\n")
+cat("  04_distributions_summary.txt           <- NEW, same content, flat text file\n")
+cat("                                             (easiest format to upload for review)\n")
 
 #--------------------------(END)------------------------------#

@@ -1,7 +1,7 @@
 ########################################
 #  10_visualizations.R                 #
 #  Created: 13/7/2026                  #
-#  Updated: 28/7/2026                  #
+#  Updated: 30/7/2026                  #
 ########################################
 
 # Reset environment -----------------------------------------------------
@@ -1737,9 +1737,57 @@ if (weather_maps_ok) {
     summarise(vim = mean(vim_monthly, na.rm = TRUE), .groups = "drop")
   ndvi_sf_39b <- attach_lga_polygons_map(ndvi_lga_39b, "state", "lga_name")
   
-  if (nrow(precip_sf_39b) == 0 || nrow(heat_sf_39b) == 0 || nrow(ndvi_sf_39b) == 0) {
-    warning("Figure 3.9b: at least one weather panel had zero LGAs matched -- check the fuzzy-match log above.", call. = FALSE)
-    fig_weather_maps <- placeholder_plot("NO LGAs MATCHED for at least one weather panel\nsee console log")
+  # CHANGED 30/7/2026, per Khem's report that the rainfall panel rendered
+  # essentially blank (title visible, no polygons) even though heat and
+  # NDVI, built with the identical attach_lga_polygons_map() call, rendered
+  # fine. A *partial* match failure doesn't trip the old nrow == 0 guard
+  # below and can still render a visually blank or near-blank panel -- a
+  # handful of surviving LGAs is not the same as a legible choropleth of
+  # ~30-40 LGAs. Two changes: (1) match counts are now always printed, not
+  # only when loss exceeds 30%, since a silent warning is easy to miss when
+  # just looking at the PNG output; (2) the specific names that failed to
+  # match are printed per panel, not just a count, since the 3 panels source
+  # LGA names from 3 different places (CHIRPS's own hand-typed lga_lookup
+  # in 02_chirps_import_analysis.R, vs. lga_clean/lga_name for heat/NDVI)
+  # and a naming-convention difference specific to one source is the most
+  # likely explanation for one panel failing while the other two succeed.
+  report_match_loss <- function(input_df, matched_sf, label) {
+    name_col <- names(input_df)[2]
+    all_names <- input_df %>% distinct(state, .data[[name_col]])
+    n_in <- nrow(all_names)
+    n_out <- nrow(matched_sf)
+    pct <- if (n_in > 0) round(100 * n_out / n_in) else NA
+    cat("Figure 3.9b (", label, "): ", n_out, " of ", n_in, " input LGAs matched to a polygon (",
+        pct, "%).\n", sep = "")
+    if (n_in > 0 && n_out < n_in) {
+      matched_names <- if (n_out > 0) unique(matched_sf[[name_col]]) else character(0)
+      dropped <- all_names %>% filter(!(.data[[name_col]] %in% matched_names))
+      cat("  Unmatched: "); print(dropped)
+    }
+    if (n_in > 0 && n_out / n_in < 0.7) {
+      warning(sprintf("Figure 3.9b (%s): only %d of %d input LGAs matched to a polygon (%.0f%%) -- ",
+                      label, n_out, n_in, 100 * n_out / n_in),
+              "check the fuzzy-match / 'NO PLAUSIBLE MATCH' log above for dropped names.", call. = FALSE)
+    }
+  }
+  report_match_loss(precip_lga_39b, precip_sf_39b, "rainfall")
+  report_match_loss(heat_lga_39b, heat_sf_39b, "heat")
+  report_match_loss(ndvi_lga_39b, ndvi_sf_39b, "NDVI")
+  
+  # Threshold changed from == 0 to < 5: a panel with, say, 1-4 matched LGAs
+  # out of ~30-40 possible is not a usable choropleth even though it is
+  # technically non-empty, and previously sailed past this guard to render
+  # as a near-blank panel with no visible explanation. Now routed to the
+  # same placeholder as a full match failure, so a broken panel is
+  # impossible to mistake for a rendering bug or something "covering" the
+  # chart -- it will say plainly that too few LGAs matched.
+  min_lgas_for_map <- 5
+  if (nrow(precip_sf_39b) < min_lgas_for_map || nrow(heat_sf_39b) < min_lgas_for_map || nrow(ndvi_sf_39b) < min_lgas_for_map) {
+    warning("Figure 3.9b: at least one weather panel matched fewer than ", min_lgas_for_map,
+            " LGAs -- check the per-panel match counts and 'Unmatched' list above.", call. = FALSE)
+    fig_weather_maps <- placeholder_plot(paste0("TOO FEW LGAs MATCHED for at least one weather panel\n",
+                                                "(precip: ", nrow(precip_sf_39b), ", heat: ", nrow(heat_sf_39b),
+                                                ", NDVI: ", nrow(ndvi_sf_39b), ") -- see console log"))
   } else {
     precip_extent_39b <- bbox_with_buffer(precip_sf_39b, 0.08)
     precip_labels_39b <- precip_sf_39b %>% st_centroid() %>% slice_max(precip_mm, n = 2) %>%
@@ -1902,6 +1950,113 @@ tab_4_3 <- tribble(~Theme, ~Quantitative, ~Field, ~Convergence,
                    "No programme staff named weather as a barrier in any conversation, even when prompted.", "Agreement by absence"
 )
 artifacts$tab_4_3 <- tab_4_3
+
+#-----------------#Appendix D — Distributions & Diagnostics#-----------------#
+# Added 30/7/2026. Deliberately kept to two figures rather than a full
+# restatement of every variable's distribution: age at registration,
+# distance, enrolment timing (Figure 2.4), gender and ZD share (Table 2.1),
+# tracing method and outcome (Figure 3.5A), and lag time (Figure 3.5B) are
+# ALL already shown in the main text, so none of them are repeated here.
+# What follows covers only the two things genuinely missing from the body:
+# age at tracing (no existing distribution anywhere) and the correlation
+# structure among each model's predictors (never shown as a figure or
+# table anywhere in this document). Sources: 03_model_b_dataset.rds for
+# the raw age values (a histogram needs individual rows, not the
+# aggregated stats in 04_distributions_summary.rds), and
+# 04_distributions_summary.rds for the precomputed correlation matrices.
+# Rainfall/heat/NDVI distributions are out of scope here — see the
+# equivalent note in 03_regression.R's Section 16.
+
+########################################
+# Figure D.1 — Age at tracing, by state#
+########################################
+
+if (require_file(mb_path, "Figure D.1 age at tracing")) {
+  d_ageD1_raw <- readRDS(mb_path) %>% filter(in_primary_sample, !is.na(age_months_tracing))
+  
+  # DIAGNOSTIC (30/7/2026, per Khem's report): the first real run put nearly
+  # every attempt into a single bar at x = 0 because age_months_tracing's
+  # max ran into the tens of thousands -- literally thousands of years old,
+  # which is not a real child's age. age_months_tracing is built in
+  # 03_regression.R as age_years * 12 + age_months, so a single corrupted
+  # age_years value (e.g. a birth-year typo, or age_years recorded as a
+  # full year like "2019" instead of "19") is enough to blow out the axis
+  # for every other row. Printed here rather than silently dropped, since
+  # the same rows also feed m_b1-m_b4 as a raw, uncapped predictor -- an
+  # implausible age this extreme could leverage those coefficients too, not
+  # just this one plot. Capped at 180 months (15 years) for the plot only,
+  # a deliberately generous upper bound (MCHTrack's own operational
+  # zero-dose window is 12-23 months, but tracing can reasonably lag well
+  # past that) rather than reusing Figure 2.4's tighter 60-month cut, which
+  # was for age AT REGISTRATION, a different question.
+  age_cap_months <- 180
+  n_age_excluded <- sum(d_ageD1_raw$age_months_tracing > age_cap_months)
+  if (n_age_excluded > 0) {
+    cat("Figure D.1: ", n_age_excluded, " of ", nrow(d_ageD1_raw),
+        " tracing attempts (", round(100 * n_age_excluded / nrow(d_ageD1_raw), 2),
+        "%) have age_months_tracing > ", age_cap_months, " months. Max value: ",
+        round(max(d_ageD1_raw$age_months_tracing), 1), " months. Excluded from ",
+        "this plot only, NOT from the regression models below -- check whether ",
+        "these rows should also be excluded from m_b1-m_b4 in 03_regression.R, ",
+        "or whether age_years/age_months has a units or entry-error problem ",
+        "worth a dedicated implausible-age flag alongside rimi_flag and the ",
+        "GPS >100km exclusion.\n", sep = "")
+  }
+  d_ageD1 <- d_ageD1_raw %>% filter(age_months_tracing <= age_cap_months)
+  
+  fig_d_1 <- ggplot(d_ageD1, aes(x = age_months_tracing, fill = state)) +
+    geom_histogram(bins = 40, position = "identity", alpha = 0.6, colour = NA) +
+    scale_fill_manual(values = pal_state) +
+    scale_y_continuous(labels = comma) +
+    labs(subtitle = "Age at tracing, by state", x = "Age at tracing (months)", y = "Attempts",
+         fill = NULL,
+         caption = if (n_age_excluded > 0) paste0(comma(n_age_excluded), " attempt(s) with an implausible age (>",
+                                                  age_cap_months, " months) excluded from this chart; see console log") else NULL) +
+    theme_diss(12)
+} else {
+  fig_d_1 <- placeholder_plot("MISSING INPUT\n03_model_b_dataset.rds")
+}
+
+fig_titles[["fig_d_1"]] <- "Figure D.1.  Age at tracing, by state (Model B, not reported elsewhere)"
+artifacts$fig_d_1_path <- save_fig(fig_d_1, "fig_d_1", width = 7, height = 4.2)
+
+########################################
+# Figure D.2 — Correlation heatmaps    #
+########################################
+
+dist_summary_path <- file.path(reg_dir, "04_distributions_summary.rds")
+if (require_file(dist_summary_path, "Figure D.2 correlation heatmaps")) {
+  dist_summary <- readRDS(dist_summary_path)
+  
+  # matrix -> long tibble helper, shared by both panels below
+  corr_long <- function(m, model_label) {
+    as.data.frame(m) %>%
+      rownames_to_column("var1") %>%
+      pivot_longer(-var1, names_to = "var2", values_to = "r") %>%
+      mutate(model = model_label)
+  }
+  
+  corr_all <- bind_rows(
+    corr_long(dist_summary$corr_a_pearson, "Model A (zero-dose)"),
+    corr_long(dist_summary$corr_b_pearson, "Model B (recovery)")
+  )
+  
+  fig_d_2 <- ggplot(corr_all, aes(x = var1, y = var2, fill = r)) +
+    geom_tile(colour = "white", linewidth = 0.6) +
+    geom_text(aes(label = sprintf("%.2f", r)), family = "serif", size = 3.2) +
+    scale_fill_gradient2(low = "#BA7517", mid = "white", high = "#1D6FA4",
+                         midpoint = 0, limits = c(-1, 1), name = "Pearson r") +
+    facet_wrap(~model, scales = "free") +
+    labs(subtitle = "Correlation among each model's predictors and outcome", x = NULL, y = NULL) +
+    theme_diss(11) +
+    theme(axis.text.x = element_text(angle = 35, hjust = 1),
+          panel.grid.major = element_blank())
+} else {
+  fig_d_2 <- placeholder_plot("MISSING INPUT\n04_distributions_summary.rds — run 03_regression.R Section 16 first")
+}
+
+fig_titles[["fig_d_2"]] <- "Figure D.2.  Correlation among each model's predictors and outcome (Pearson)"
+artifacts$fig_d_2_path <- save_fig(fig_d_2, "fig_d_2", width = 8.4, height = 4.6)
 
 #--------------------------(PART 1 END)------------------------------#
 

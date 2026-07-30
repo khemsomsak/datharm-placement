@@ -1,7 +1,7 @@
 ########################################
 #  01_mchtrack_import.R                #
 #  Created: 14/5/2026                  #
-#  Updated: 28/7/2026                  #
+#  Updated: 30/7/2026                  #
 ########################################
 
 # Reset environment -----------------------------------------------------
@@ -288,6 +288,49 @@ mutate(
   zero_dose_ageflex  = (zero_dose == TRUE)
   # Definition 2 (truly zero dose) added in 03_regression.R after vaccine join
 )
+
+#Validate: state/LGA cross-boundary check (added 30/7/2026, per Khem's Figure 3.2b question) ----
+# state above is assigned per source export file (mutate(state = "Kano")/
+# "Katsina" at the top of this script), NOT derived from lga_name -- the
+# two fields are independent. rimi_flag is derived purely from lga_name
+# ("Rimi LGA"), a real Katsina LGA. If any row is tagged state == "Kano"
+# AND rimi_flag == TRUE, this is what produces a nonzero "Rimi LGA
+# (backfill)" exclusion bar on Kano's own panel of Figure 3.2b -- not a
+# bug in that waterfall's arithmetic (checked directly: it subtracts two
+# counts drawn from the same state-filtered population), but a real
+# state/LGA combination that needs a human explanation: either a
+# genuine cross-boundary case (a household near the Kano-Katsina border
+# enrolled through a Kano-based CHW or facility despite a home LGA of
+# Rimi), or a data entry error in the raw export. Printed here so the
+# actual row count is confirmed rather than assumed either way, and
+# generalised beyond Rimi in case other LGA/state mismatches exist too.
+rimi_in_kano_n <- data_ll_clean %>% filter(state == "Kano", rimi_flag) %>% nrow()
+cat("State/LGA cross-boundary check (linelisted):\n")
+cat("  Rows with state == 'Kano' and lga_name == 'Rimi LGA': ", rimi_in_kano_n, "\n", sep = "")
+if (rimi_in_kano_n > 0) {
+  cat("  This is NOT a computation bug in Figure 3.2b's waterfall -- state and\n")
+  cat("  lga_name are independent fields (state is set by which export file a\n")
+  cat("  row came from, at the top of this script). Confirm with Rahimat\n")
+  cat("  whether these are genuine cross-boundary enrolments (Kano facility,\n")
+  cat("  Katsina home LGA) or a data entry error before citing this number.\n")
+}
+# Broader check: any other LGA name appearing under both states at all,
+# not just Rimi -- a real cross-boundary pattern should show up as more
+# than one name if it's a genuine geographic phenomenon near the border,
+# rather than an isolated Rimi-specific issue.
+lga_state_crosstab <- data_ll_clean %>%
+  filter(!is.na(lga_name), lga_name != "") %>%
+  distinct(state, lga_name) %>%
+  count(lga_name, name = "n_states_seen_under") %>%
+  filter(n_states_seen_under > 1)
+if (nrow(lga_state_crosstab) > 0) {
+  cat("  LGA names appearing under more than one state (Rimi should be one",
+      "of these if the count above is nonzero):\n")
+  print(lga_state_crosstab)
+} else {
+  cat("  No LGA name appears under more than one state in this table.\n")
+}
+cat("\n")
 
 #Deduplicate ----
 # Key: pseudo_id. Applied to the full table (women + children both), since
