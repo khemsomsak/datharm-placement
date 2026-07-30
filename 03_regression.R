@@ -2,8 +2,7 @@
 #  Child-Level Regression Analysis                     #
 #  ZD Predictors & Tracing Effectiveness               #
 #  Created on 28/5/2026                                #
-#  Last Updated 30/7/2026 - added Section 16,          #
-#  distributions and summary statistics for Appendix D #
+#  Last Updated 30/7/2026 - excluded implausible ages  #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -89,10 +88,17 @@ data_model_a <- data_ll_clean %>%
     gender_female      = as.integer(gender == "female"),
     
     # primary sample excludes Rimi LGA backfill
-    in_primary_sample  = !rimi_flag
+    in_primary_sample  = !rimi_flag,
+    
+    # implausible age (>180m) excluded as data-entry error -- Decision Log, Appendix A
+    age_implausible    = !is.na(age_months_at_reg) & age_months_at_reg > 180
     
   ) %>%
   filter(!is.na(hf_distance_km))
+
+#Apply: implausible-age exclusion ----
+cat("Model A: excluding", sum(data_model_a$age_implausible), "implausible-age rows\n\n")
+data_model_a <- data_model_a %>% filter(!age_implausible)
 
 #Validate: zero-dose rates and sample composition ----
 cat("Model A dataset:\n")
@@ -270,10 +276,17 @@ data_model_b <- data_dt_clean %>%
     ),
     
     # primary sample excludes Rimi LGA
-    in_primary_sample    = !rimi_flag
+    in_primary_sample    = !rimi_flag,
+    
+    # implausible age (>180m) excluded as data-entry error -- Decision Log, Appendix A
+    age_implausible      = !is.na(age_months_tracing) & age_months_tracing > 180
     
   ) %>%
   filter(!is.na(tracing_outcome))
+
+#Apply: implausible-age exclusion ----
+cat("Model B: excluding", sum(data_model_b$age_implausible), "implausible-age rows\n\n")
+data_model_b <- data_model_b %>% filter(!age_implausible)
 
 #Validate: outcome distribution and sample composition ----
 cat("Model B dataset:\n")
@@ -290,39 +303,14 @@ data_model_b %>%
   print()
 cat("\n")
 
-#Validate: implausible-age check (added 30/7/2026, per Khem's report on Figure D.1) ----
-# age_months_tracing = age_years * 12 + coalesce(age_months, 0). A single
-# corrupted age_years value (birth-year typo, or age_years accidentally
-# recorded as a full year rather than a child's age in years) is enough to
-# produce an age in the tens of thousands of months. This was caught
-# visually in Figure D.1 (10_visualizations.R), where it compressed nearly
-# every real attempt into one bar. Checked here too, since this same
-# uncapped variable is a raw predictor in m_b1 through m_b4 below, not
-# just a plotting input -- an outlier this extreme can leverage a
-# regression coefficient even inside a fixed-effects specification.
-# Flagged rather than silently excluded: unlike rimi_flag or the GPS
-# >100km rule, there is no existing decision-log entry for what counts as
-# an implausible age here, so the cutoff below (180 months = 15 years) is
-# a plot-only default, not applied to the models. Confirm with Khem
-# whether m_b1-m_b4 should also exclude these rows, and whether the same
-# check is needed on age_months_at_reg for Model A above.
-implausible_age_cutoff <- 180
-n_implausible_age_b <- sum(data_model_b$age_months_tracing > implausible_age_cutoff, na.rm = TRUE)
-cat("Implausible-age check (Model B, age_months_tracing):\n")
-cat("  Max age_months_tracing:       ", round(max(data_model_b$age_months_tracing, na.rm = TRUE), 1), "months\n")
-cat("  Rows > ", implausible_age_cutoff, " months: ", n_implausible_age_b,
-    " of ", nrow(data_model_b), "\n", sep = "")
-if (n_implausible_age_b > 0) {
-  cat("  NOT excluded from m_b1-m_b4 below -- these rows currently remain in\n")
-  cat("  every Model B specification as drafted. Decide with Khem whether to\n")
-  cat("  add an implausible-age exclusion (mirroring rimi_flag / the GPS\n")
-  cat("  >100km rule) before treating those coefficients as final.\n")
-}
-n_implausible_age_a <- sum(data_model_a$age_months_at_reg > implausible_age_cutoff, na.rm = TRUE)
-cat("Implausible-age check (Model A, age_months_at_reg):\n")
-cat("  Max age_months_at_reg:        ", round(max(data_model_a$age_months_at_reg, na.rm = TRUE), 1), "months\n")
-cat("  Rows > ", implausible_age_cutoff, " months: ", n_implausible_age_a,
-    " of ", nrow(data_model_a), "\n\n", sep = "")
+#Validate: sanity exclusions on other predictors ----
+# hf_distance_km: >100km->NA already applied upstream in 01_mchtrack_import.R
+# to all three source tables, so Model A and Model B share the same rule.
+# days_since_visit: only capped at <=300 for display (Fig 3.5B, Table 4.1),
+# not excluded from m_b1-m_b4 -- flagged here, not yet resolved.
+n_lag_over_300 <- sum(data_model_b$days_since_visit > 300, na.rm = TRUE)
+cat("days_since_visit > 300 days:", n_lag_over_300, "of",
+    sum(!is.na(data_model_b$days_since_visit)), "-- not excluded from models\n\n")
 
 # 10b. Model B0: TRUE full sample — no lag-time restriction ------------------
 # FIX (13/7/2026): every Model B spec below includes days_since_visit, and

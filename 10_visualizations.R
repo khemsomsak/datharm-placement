@@ -271,11 +271,67 @@ stop_if_empty <- function(x, what) {
   invisible(x)
 }
 
-bbox_with_buffer <- function(sf_obj, buffer_pct = 0.08) {
+bbox_with_buffer <- function(sf_obj, buffer_pct = 0.08, fallback_sf = NULL, label = "layer") {
   bb <- st_bbox(sf_obj)
   dx <- (bb["xmax"] - bb["xmin"]) * buffer_pct
   dy <- (bb["ymax"] - bb["ymin"]) * buffer_pct
+  # DEFENSIVE CHECK (30/7/2026, per Khem's report that fig_weather_maps'
+  # rainfall panel rendered blank despite 57 valid LGA matches -- ruling out
+  # a match-count problem left a bad bounding box as the next most likely
+  # cause: even one mismatched or invalid geometry among the matched rows
+  # can blow the bbox out to a size that makes every real polygon shrink to
+  # an invisible sliver. Nigeria spans roughly 3-14 deg N / 3-15 deg E, so a
+  # single-state bbox wider or taller than 5 degrees is already implausible
+  # for Kano or Katsina alone (each is well under 2 degrees across) and is
+  # treated as a sign the geometry set is corrupted rather than trusted.
+  bad_bbox <- any(!is.finite(c(bb))) || (bb["xmax"] - bb["xmin"]) > 5 || (bb["ymax"] - bb["ymin"]) > 5
+  if (bad_bbox) {
+    cat("  WARNING (", label, "): computed bounding box looks implausible for a single ",
+        "state (xrange ", round(bb["xmax"] - bb["xmin"], 2), " deg, yrange ",
+        round(bb["ymax"] - bb["ymin"], 2), " deg). Printing full bbox and per-row extents ",
+        "to help find the bad geometry:\n", sep = "")
+    print(bb)
+    print(sf_obj %>% st_drop_geometry() %>% mutate(bbox_xmin = st_bbox_list(sf_obj)$xmin,
+                                                   bbox_xmax = st_bbox_list(sf_obj)$xmax))
+    if (!is.null(fallback_sf)) {
+      cat("  Falling back to the state-level extent instead of this layer's own bbox.\n")
+      bb <- st_bbox(fallback_sf)
+      dx <- (bb["xmax"] - bb["xmin"]) * buffer_pct
+      dy <- (bb["ymax"] - bb["ymin"]) * buffer_pct
+    }
+  }
   list(xlim = c(bb["xmin"] - dx, bb["xmax"] + dx), ylim = c(bb["ymin"] - dy, bb["ymax"] + dy))
+}
+
+# Per-row bbox helper used only by the diagnostic branch above -- returns a
+# tibble of each feature's own xmin/xmax so a single outlier geometry (e.g.
+# a bad fuzzy match that landed on a real but distant LGA, or a corrupted
+# polygon from the GADM fetch) can be spotted by eye rather than guessed at.
+st_bbox_list <- function(sf_obj) {
+  bind_rows(lapply(seq_len(nrow(sf_obj)), function(i) {
+    b <- st_bbox(sf_obj[i, ])
+    tibble(xmin = b["xmin"], xmax = b["xmax"], ymin = b["ymin"], ymax = b["ymax"])
+  }))
+}
+
+# Prints a value-column summary (min/max/NA count) and a geometry-validity
+# check for a matched weather layer, so a blank panel with a healthy match
+# count (like precip_sf_39b: 57 of ~57 matched, still blank) can be
+# distinguished from a matching problem -- the two look identical from the
+# match-count diagnostic alone but need completely different fixes.
+diagnose_map_layer <- function(sf_obj, value_col, label) {
+  vals <- sf_obj[[value_col]]
+  cat("Figure 3.9b (", label, ") value/geometry check:\n", sep = "")
+  cat("  ", value_col, ": min = ", round(min(vals, na.rm = TRUE), 3),
+      ", max = ", round(max(vals, na.rm = TRUE), 3),
+      ", n_NA = ", sum(is.na(vals)), " of ", length(vals), "\n", sep = "")
+  n_invalid <- sum(!st_is_valid(sf_obj), na.rm = TRUE)
+  if (n_invalid > 0) {
+    cat("  ", n_invalid, " of ", nrow(sf_obj), " geometries are INVALID per st_is_valid().\n", sep = "")
+  }
+  bb <- st_bbox(sf_obj)
+  cat("  Combined bbox: xrange ", round(bb["xmax"] - bb["xmin"], 3), " deg, yrange ",
+      round(bb["ymax"] - bb["ymin"], 3), " deg\n", sep = "")
 }
 
 theme_map_diss <- function(base_size = 12) {
@@ -1774,22 +1830,41 @@ if (weather_maps_ok) {
   report_match_loss(heat_lga_39b, heat_sf_39b, "heat")
   report_match_loss(ndvi_lga_39b, ndvi_sf_39b, "NDVI")
   
-  # Threshold changed from == 0 to < 5: a panel with, say, 1-4 matched LGAs
-  # out of ~30-40 possible is not a usable choropleth even though it is
-  # technically non-empty, and previously sailed past this guard to render
-  # as a near-blank panel with no visible explanation. Now routed to the
-  # same placeholder as a full match failure, so a broken panel is
-  # impossible to mistake for a rendering bug or something "covering" the
-  # chart -- it will say plainly that too few LGAs matched.
-  min_lgas_for_map <- 5
-  if (nrow(precip_sf_39b) < min_lgas_for_map || nrow(heat_sf_39b) < min_lgas_for_map || nrow(ndvi_sf_39b) < min_lgas_for_map) {
-    warning("Figure 3.9b: at least one weather panel matched fewer than ", min_lgas_for_map,
-            " LGAs -- check the per-panel match counts and 'Unmatched' list above.", call. = FALSE)
+  # Added 30/7/2026: a healthy match count (precip: 57 of ~57) with a still-
+  # blank panel means the problem is downstream of matching -- either the
+  # value column or the geometry itself. Checked here, separately from the
+  # match-count diagnostic above, since the two failure modes look identical
+  # in a screenshot but need different fixes.
+  diagnose_map_layer(precip_sf_39b, "precip_mm", "rainfall")
+  diagnose_map_layer(heat_sf_39b, "utci", "heat")
+  diagnose_map_layer(ndvi_sf_39b, "vim", "NDVI")
+  
+  # FIXED 30/7/2026: the first version of this guard used one uniform
+  # min_lgas_for_map = 5 threshold for all three panels. That's wrong for
+  # heat specifically -- per the note at the top of this section, panel B
+  # is Kano-only BY CONSTRUCTION (Ungogo and Gabasawa are the only two
+  # ERA5/UTCI-monitored sites full stop, not a partial match failure), so
+  # heat_sf_39b will legitimately have exactly 2 rows on a fully correct
+  # run. A uniform threshold of 5 flagged that correct state as broken and
+  # replaced a working panel with a placeholder -- confirmed directly from
+  # Khem's console output (precip: 57, heat: 2, NDVI: 51), where precip and
+  # NDVI are both healthy matches and heat's 2 is the expected full extent,
+  # not a failure. Thresholds are now per-panel: precip and NDVI, which
+  # should each cover most of Kano and Katsina's ~30-40 LGAs, still guard
+  # at 5; heat guards only against the genuine failure case (0 matched).
+  min_lgas_precip_ndvi <- 5
+  min_lgas_heat <- 1
+  if (nrow(precip_sf_39b) < min_lgas_precip_ndvi || nrow(heat_sf_39b) < min_lgas_heat || nrow(ndvi_sf_39b) < min_lgas_precip_ndvi) {
+    warning("Figure 3.9b: at least one weather panel matched fewer LGAs than expected -- ",
+            "check the per-panel match counts and 'Unmatched' list above.", call. = FALSE)
     fig_weather_maps <- placeholder_plot(paste0("TOO FEW LGAs MATCHED for at least one weather panel\n",
                                                 "(precip: ", nrow(precip_sf_39b), ", heat: ", nrow(heat_sf_39b),
                                                 ", NDVI: ", nrow(ndvi_sf_39b), ") -- see console log"))
   } else {
-    precip_extent_39b <- bbox_with_buffer(precip_sf_39b, 0.08)
+    precip_extent_39b <- bbox_with_buffer(
+      precip_sf_39b, 0.08,
+      fallback_sf = bounds_geo$adm1 %>% filter(NAME_1 %in% unique(precip_sf_39b$NAME_1)),
+      label = "rainfall")
     precip_labels_39b <- precip_sf_39b %>% st_centroid() %>% slice_max(precip_mm, n = 2) %>%
       mutate(label = paste0(NAME_2, " (", round(precip_mm), " mm)"))
     
@@ -1807,7 +1882,10 @@ if (weather_maps_ok) {
     # Cropped to Ungogo and Gabasawa specifically -- the previous version
     # used all of Kano's ~44 LGAs as the extent basis, even though the
     # ERA5/UTCI panel this figure draws on covers only these two.
-    heat_extent_39b <- bbox_with_buffer(heat_sf_39b, 0.15)
+    heat_extent_39b <- bbox_with_buffer(
+      heat_sf_39b, 0.15,
+      fallback_sf = bounds_geo$adm2 %>% filter(NAME_1 == "Kano"),
+      label = "heat")
     heat_labels_39b <- heat_sf_39b %>% st_centroid() %>%
       mutate(label = paste0(NAME_2, " (", round(utci, 1), "°C)"))
     
@@ -1825,7 +1903,10 @@ if (weather_maps_ok) {
       labs(subtitle = "B. Heat (ERA5/UTCI)") +
       theme_map_diss(12) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 13))
     
-    ndvi_extent_39b <- bbox_with_buffer(ndvi_sf_39b, 0.08)
+    ndvi_extent_39b <- bbox_with_buffer(
+      ndvi_sf_39b, 0.08,
+      fallback_sf = bounds_geo$adm1 %>% filter(NAME_1 %in% unique(ndvi_sf_39b$NAME_1)),
+      label = "NDVI")
     ndvi_labels_39b <- ndvi_sf_39b %>% st_centroid() %>% slice_max(vim, n = 2) %>%
       mutate(label = paste0(NAME_2, " (", round(vim, 3), ")"))
     
@@ -2427,75 +2508,5 @@ saveRDS(list(thesis = artifacts, datharm = artifacts_datharm),
 # fig_titles is initialised, near the top of Part 1.
 saveRDS(as_tibble(fig_titles) %>% pivot_longer(everything(), names_to = "fig_id", values_to = "suggested_title"),
         file.path(out_dir, "10_figure_titles.rds"))
-
-cat("\n=== BUILD COMPLETE ===\n")
-cat("Manifests saved to:", out_dir, "\n")
-cat("Figures saved to:", figs_dir, "\n\n")
-cat("Thesis artifacts:\n");  print(names(artifacts))
-cat("\nDATHARM artifacts:\n"); print(names(artifacts_datharm))
-
-cat("\n--- Reminders before trusting this output ---\n")
-cat("1. extract_coef_se() has not been tested against a real modelsummary\n")
-cat("   .txt file. Check the 'Model A coefficient extraction check' cat()\n")
-cat("   output near the top of this run — if coefficients show NA, the\n")
-cat("   term-matching patterns need adjusting against the real file layout.\n")
-cat("2. Figure 2.2 and DATHARM Fig1A are now both dynamic, sourced from\n")
-cat("   09_data_investigations.R. Run that script first, or both come back\n")
-cat("   as MISSING INPUT placeholders.\n")
-cat("3. Figure 3.2/3.2b's waterfall now shows duplicate-row removal as a\n")
-cat("   real, uncapped step (sourced from 01_dedup_summary.rds /\n")
-cat("   01_dedup_summary_by_state.rds — rerun 01 if either is missing).\n")
-cat("   Null-LGA remains caption-only, since 03_regression.R doesn't\n")
-cat("   apply that filter yet.\n")
-cat("4. Table3B (DATHARM) and its narrative sentence are PROXY figures —\n")
-cat("   built from identified_zd's own visit_date standing in for the\n")
-cat("   expanded resolution_date field the original table used. Confirm\n")
-cat("   whether DATHARM's data manager can supply the real expanded export\n")
-cat("   before citing these numbers as a reproduction of the original.\n")
-cat("5. Fig5A (DATHARM, ward deceased rate) uses a str_detect pattern for\n")
-cat("   'deceased' tracing outcomes (deceased_pattern in\n")
-cat("   09_data_investigations.R) that has not been verified against the\n")
-cat("   real distinct tracing_outcome values. Check that script's console\n")
-cat("   output before citing the Mekiya figure specifically.\n")
-cat("6. This script assumes 09_data_investigations.R, 03_regression.R and\n")
-cat("   06_era5_analysis.R have all been run with their 13/7/2026 fixes. If\n")
-cat("   Table 3.1b's Full sample and Lag-time subset N still come out\n")
-cat("   equal, or any DATHARM chunk shows a MISSING INPUT placeholder,\n")
-cat("   check which upstream script needs rerunning first.\n")
-cat("7. Scripts 02-08 keep their original numbers (no renumbering cascade —\n")
-cat("   only 09_data_investigations.R and this file changed names/numbers).\n")
-cat("   reg_dir/resid_dir/era_dir/chirps_dir/ndvi_dir below are already\n")
-cat("   final and should not need further changes.\n")
-cat("8. fig3a-timeline, fig4a and table6a stay static by design (no data\n")
-cat("   dependency) — table6a is exported here for convenience so the\n")
-cat("   future DATHARM Rmd can pull every table from one manifest, but it\n")
-cat("   was never computed from MCHTrack data and never will be.\n")
-cat("9. Thesis figures (Part 1) no longer have a title baked into the PNG —\n")
-cat("   see 10_figure_titles.rds for the suggested 'Figure X.X.  Title'\n")
-cat("   text per figure. Apply as knitr chunk captions in the Rmd; titling,\n")
-cat("   renumbering and reordering figures no longer requires rerunning\n")
-cat("   this script. DATHARM figures (Part 2) are UNCHANGED — still have\n")
-cat("   baked-in titles, out of scope for this pass.\n")
-cat("10. Two new figures this pass: fig_weather_robustness (coefficient\n")
-cat("    plot companion to tab_weather_robustness) and fig_2_2b (data\n")
-cat("    reliability by state, motivating RQ3's Kano-only scope). Neither\n")
-cat("    is wired into 11_dissertation_draft.Rmd yet, same as fig_3_2b.\n")
-cat("11. FOUR new geospatial figures (19/7/2026): fig_1_1 (footprint map,\n")
-cat("    fills the Figure 1.1 placeholder), fig_3_4b (ward residual map,\n")
-cat("    companion to fig_3_4), fig_3_7b (off-network share map, companion\n")
-cat("    to fig_3_7), fig_weather_maps (rainfall/heat/NDVI choropleths,\n")
-cat("    companion to fig_weather_robustness / Figure 3.9). Ported from the\n")
-cat("    standalone fig_*_map_prototype.R scripts after sign-off there —\n")
-cat("    same LGA name-matching, point-sampling and binned-legend logic,\n")
-cat("    now sourced from the real 01/02/04/06/07_*.rds files instead of a\n")
-cat("    proof-of-concept run. Boundary data is GADM v4.1 (gadm.org),\n")
-cat("    fetched over the network on first run and cached to\n")
-cat("    02_data/03_geodata thereafter — if that fetch fails (no network),\n")
-cat("    all four fall back to a placeholder rather than halting the whole\n")
-cat("    script (see map_boundaries_loaded near the top). None of the four\n")
-cat("    is wired into 11_dissertation_body.Rmd yet, same as fig_3_2b/\n")
-cat("    fig_weather_robustness/fig_2_2b above -- update 11_dissertation_\n")
-cat("    body.Rmd's Figure 1.1 placeholder (and add new show_fig() calls\n")
-cat("    for the other three) once you're happy with these.\n")
 
 #--------------------------(END)------------------------------#
