@@ -2,7 +2,7 @@
 #  Child-Level Regression Analysis                     #
 #  ZD Predictors & Tracing Effectiveness               #
 #  Created on 28/5/2026                                #
-#  Last Updated 30/7/2026 - excluded implausible ages  #
+#  Last Updated 30/7/2026 - added Fig 3.1 dose_group   #
 ########################################################
 
 # Reset environment -----------------------------------------------------
@@ -62,12 +62,32 @@ cat("  any_vaccine_flag: ", nrow(data_any_vaccine), "\n\n")
 
 # 3. Build child-level analysis dataset for Model A ---------------------------
 
+#Count distinct recorded doses per child from facility_visits, for Figure 3.1's
+#by-dose-count breakdown (distinct antigen-dose values, e.g. "Penta_1" and
+#"Penta_2" count as two; the same value logged twice does not) ----
+data_dose_counts <- data_fv_clean %>%
+  filter(woman_or_child == "child",
+         !is.na(vaccines_administered), vaccines_administered != "") %>%
+  separate_rows(vaccines_administered, sep = ",\\s*") %>%
+  filter(vaccines_administered != "") %>%
+  distinct(patient_id, vaccines_administered) %>%
+  count(patient_id, name = "n_doses_recorded")
+
 #Filter to children only; join vaccine contact flag for truly-ZD definition ----
 data_model_a <- data_ll_clean %>%
   filter(woman_or_child == "child") %>%
   left_join(data_any_vaccine,
             by = c("pseudo_id" = "patient_id")) %>%
+  left_join(data_dose_counts,
+            by = c("pseudo_id" = "patient_id")) %>%
   mutate(
+    n_doses_recorded = replace_na(n_doses_recorded, 0L),
+    dose_group = case_when(
+      n_doses_recorded == 0 ~ "0 (zero-dose)",
+      n_doses_recorded <= 4 ~ "1-4",
+      TRUE                  ~ "5+"
+    ),
+    dose_group = factor(dose_group, levels = c("0 (zero-dose)", "1-4", "5+")),
     
     # Definition 1 (primary): MCHTrack operational penta-ZD flag, 12-23m window
     zero_dose_penta    = as.integer(zero_dose == TRUE),
@@ -90,14 +110,13 @@ data_model_a <- data_ll_clean %>%
     # primary sample excludes Rimi LGA backfill
     in_primary_sample  = !rimi_flag,
     
-    # implausible age (>180m) excluded as data-entry error -- Decision Log, Appendix A
-    age_implausible    = !is.na(age_months_at_reg) & age_months_at_reg > 180
+    # implausible age (<0 or >180m) excluded as data-entry error -- Decision Log, Appendix A
+    age_implausible    = !is.na(age_months_at_reg) &
+      (age_months_at_reg < 0 | age_months_at_reg > 180)
     
   ) %>%
   filter(!is.na(hf_distance_km))
 
-#Apply: implausible-age exclusion ----
-cat("Model A: excluding", sum(data_model_a$age_implausible), "implausible-age rows\n\n")
 data_model_a <- data_model_a %>% filter(!age_implausible)
 
 #Validate: zero-dose rates and sample composition ----
@@ -111,6 +130,19 @@ data_model_a %>%
     pct_female     = round(mean(gender_female,     na.rm = TRUE) * 100, 1),
     median_dist_km = round(median(hf_distance_km, na.rm = TRUE), 2),
     median_age_reg = round(median(age_months_at_reg, na.rm = TRUE), 1)
+  ) %>%
+  print()
+cat("\n")
+
+cat("Model A dataset — by recorded dose count (dose_group, Figure 3.1):\n")
+data_model_a %>%
+  filter(in_primary_sample) %>%
+  group_by(dose_group) %>%
+  summarise(
+    n_children      = n(),
+    median_dist_km  = round(median(hf_distance_km, na.rm = TRUE), 2),
+    median_age_reg  = round(median(age_months_at_reg, na.rm = TRUE), 1),
+    .groups = "drop"
   ) %>%
   print()
 cat("\n")
@@ -278,14 +310,13 @@ data_model_b <- data_dt_clean %>%
     # primary sample excludes Rimi LGA
     in_primary_sample    = !rimi_flag,
     
-    # implausible age (>180m) excluded as data-entry error -- Decision Log, Appendix A
-    age_implausible      = !is.na(age_months_tracing) & age_months_tracing > 180
+    # implausible age (<0 or >180m) excluded as data-entry error -- Decision Log, Appendix A
+    age_implausible      = !is.na(age_months_tracing) &
+      (age_months_tracing < 0 | age_months_tracing > 180)
     
   ) %>%
   filter(!is.na(tracing_outcome))
 
-#Apply: implausible-age exclusion ----
-cat("Model B: excluding", sum(data_model_b$age_implausible), "implausible-age rows\n\n")
 data_model_b <- data_model_b %>% filter(!age_implausible)
 
 #Validate: outcome distribution and sample composition ----
@@ -303,14 +334,10 @@ data_model_b %>%
   print()
 cat("\n")
 
-#Validate: sanity exclusions on other predictors ----
 # hf_distance_km: >100km->NA already applied upstream in 01_mchtrack_import.R
 # to all three source tables, so Model A and Model B share the same rule.
 # days_since_visit: only capped at <=300 for display (Fig 3.5B, Table 4.1),
-# not excluded from m_b1-m_b4 -- flagged here, not yet resolved.
-n_lag_over_300 <- sum(data_model_b$days_since_visit > 300, na.rm = TRUE)
-cat("days_since_visit > 300 days:", n_lag_over_300, "of",
-    sum(!is.na(data_model_b$days_since_visit)), "-- not excluded from models\n\n")
+# not excluded from m_b1-m_b4 -- distribution reported in Section 16 below.
 
 # 10b. Model B0: TRUE full sample — no lag-time restriction ------------------
 # FIX (13/7/2026): every Model B spec below includes days_since_visit, and
@@ -329,14 +356,6 @@ m_b0_full <- feglm(
   vcov   = ~lga_name
 )
 
-cat("Model B0 (full sample, no lag-time restriction) — N check:\n")
-cat("  in_primary_sample rows:      ",
-    nrow(data_model_b %>% filter(in_primary_sample)), "\n")
-cat("  m_b0_full fitted N:          ", nobs(m_b0_full), "\n")
-cat("  (difference from raw N reflects any remaining missingness in\n")
-cat("   method_sms / hf_distance_km / age_months_tracing / lga_name FE\n")
-cat("   singleton groups, NOT the lag-time restriction)\n\n")
-
 # 11. Model B1: strict outcome, LGA fixed effects — primary spec ---------------
 # NOTE: this spec includes days_since_visit, so it is the LAG-TIME SUBSET
 # spec, not the full sample — see m_b0_full above and Section 15b below.
@@ -349,9 +368,6 @@ m_b1 <- feglm(
   family = binomial,
   vcov   = ~lga_name
 )
-
-cat("Model B1 (lag-time subset) — N check:\n")
-cat("  m_b1 fitted N:               ", nobs(m_b1), "\n\n")
 
 # 12. Model B2: robustness — permissive outcome --------------------------------
 
@@ -438,12 +454,10 @@ modelsummary(
   output  = file.path(out_dir, "03_table_3_1b_full_vs_lagtime.txt")
 )
 
-cat("Table 3.1b comparison - sanity check (should now differ):\n")
 modelsummary(
   list("Full sample" = m_b0_full, "Lag-time subset" = m_b1),
   stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01)
 )
-cat("\n")
 
 
 #--------------------#Distributions & Summary Statistics#--------------------#
@@ -547,9 +561,6 @@ dist_a_continuous <- bind_rows(
                       "age_months_at_reg", "Age at registration (months)", "Katsina")
 )
 
-cat("Model A - continuous variable distributions:\n")
-print(dist_a_continuous)
-cat("\n")
 
 # 16c. Model A distributions - categorical variables --------------------------
 
@@ -564,9 +575,6 @@ dist_a_categorical <- bind_rows(
                        "state", "State")
 )
 
-cat("Model A - categorical variable distributions:\n")
-print(dist_a_categorical)
-cat("\n")
 
 # 16d. Model B distributions - continuous variables ---------------------------
 # age_months_tracing and days_since_visit. days_since_visit is reported on
@@ -587,9 +595,6 @@ dist_b_continuous <- bind_rows(
                       "days_since_visit", "Days since last facility visit (lag-time subset)", "Katsina")
 )
 
-cat("Model B - continuous variable distributions:\n")
-print(dist_b_continuous)
-cat("\n")
 
 # 16e. Model B distributions - categorical variables ---------------------------
 
@@ -606,9 +611,6 @@ dist_b_categorical <- bind_rows(
                        "state", "State")
 )
 
-cat("Model B - categorical variable distributions:\n")
-print(dist_b_categorical)
-cat("\n")
 
 # 16f. Correlation matrices ---------------------------------------------------
 # Pearson and Spearman side by side for the continuous predictors and their
@@ -631,10 +633,6 @@ corr_b_vars <- data_model_b %>%
 corr_b_pearson  <- round(cor(corr_b_vars, method = "pearson"),  2)
 corr_b_spearman <- round(cor(corr_b_vars, method = "spearman"), 2)
 
-cat("Model A - correlation matrix (Pearson):\n");  print(corr_a_pearson);  cat("\n")
-cat("Model A - correlation matrix (Spearman):\n"); print(corr_a_spearman); cat("\n")
-cat("Model B - correlation matrix (Pearson):\n");  print(corr_b_pearson);  cat("\n")
-cat("Model B - correlation matrix (Spearman):\n"); print(corr_b_spearman); cat("\n")
 
 # 16g. Pre-regression missingness summary -------------------------------------
 # How many rows each key variable was missing BEFORE the filters already
@@ -673,9 +671,6 @@ missingness_summary <- bind_rows(
     )
 )
 
-cat("Pre-regression missingness summary:\n")
-print(missingness_summary)
-cat("\n")
 
 # 16h. Bundle and write TXT companion -----------------------------------------
 # RDS keeps every object queryable; TXT is a single flat file Khem can

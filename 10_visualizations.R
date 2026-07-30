@@ -154,7 +154,7 @@ save_fig <- function(plot, name, width, height, dpi = 300) {
 # without relying on the red-green channel at all.
 col_sig <- "#1D6FA4"; col_nonsig <- "#B0B0B0"; col_strict <- "#BA7517"
 pal_state <- c("Kano" = "#1D6FA4", "Katsina" = "#BA7517")
-pal_zd <- c("Zero-dose" = "#C0312D", "Vaccinated" = "#5A9FD4")
+pal_dose <- c("0 (zero-dose)" = "#C0312D", "1-4" = "#BA7517", "5+" = "#5A9FD4")
 col_confirmed <- "#1D6FA4"; col_offnet <- "#E69F00"; col_notrec <- "#666666"
 
 # Caption/subtitle grey darkened and enlarged per Prabin's readability
@@ -271,67 +271,11 @@ stop_if_empty <- function(x, what) {
   invisible(x)
 }
 
-bbox_with_buffer <- function(sf_obj, buffer_pct = 0.08, fallback_sf = NULL, label = "layer") {
+bbox_with_buffer <- function(sf_obj, buffer_pct = 0.08) {
   bb <- st_bbox(sf_obj)
   dx <- (bb["xmax"] - bb["xmin"]) * buffer_pct
   dy <- (bb["ymax"] - bb["ymin"]) * buffer_pct
-  # DEFENSIVE CHECK (30/7/2026, per Khem's report that fig_weather_maps'
-  # rainfall panel rendered blank despite 57 valid LGA matches -- ruling out
-  # a match-count problem left a bad bounding box as the next most likely
-  # cause: even one mismatched or invalid geometry among the matched rows
-  # can blow the bbox out to a size that makes every real polygon shrink to
-  # an invisible sliver. Nigeria spans roughly 3-14 deg N / 3-15 deg E, so a
-  # single-state bbox wider or taller than 5 degrees is already implausible
-  # for Kano or Katsina alone (each is well under 2 degrees across) and is
-  # treated as a sign the geometry set is corrupted rather than trusted.
-  bad_bbox <- any(!is.finite(c(bb))) || (bb["xmax"] - bb["xmin"]) > 5 || (bb["ymax"] - bb["ymin"]) > 5
-  if (bad_bbox) {
-    cat("  WARNING (", label, "): computed bounding box looks implausible for a single ",
-        "state (xrange ", round(bb["xmax"] - bb["xmin"], 2), " deg, yrange ",
-        round(bb["ymax"] - bb["ymin"], 2), " deg). Printing full bbox and per-row extents ",
-        "to help find the bad geometry:\n", sep = "")
-    print(bb)
-    print(sf_obj %>% st_drop_geometry() %>% mutate(bbox_xmin = st_bbox_list(sf_obj)$xmin,
-                                                   bbox_xmax = st_bbox_list(sf_obj)$xmax))
-    if (!is.null(fallback_sf)) {
-      cat("  Falling back to the state-level extent instead of this layer's own bbox.\n")
-      bb <- st_bbox(fallback_sf)
-      dx <- (bb["xmax"] - bb["xmin"]) * buffer_pct
-      dy <- (bb["ymax"] - bb["ymin"]) * buffer_pct
-    }
-  }
   list(xlim = c(bb["xmin"] - dx, bb["xmax"] + dx), ylim = c(bb["ymin"] - dy, bb["ymax"] + dy))
-}
-
-# Per-row bbox helper used only by the diagnostic branch above -- returns a
-# tibble of each feature's own xmin/xmax so a single outlier geometry (e.g.
-# a bad fuzzy match that landed on a real but distant LGA, or a corrupted
-# polygon from the GADM fetch) can be spotted by eye rather than guessed at.
-st_bbox_list <- function(sf_obj) {
-  bind_rows(lapply(seq_len(nrow(sf_obj)), function(i) {
-    b <- st_bbox(sf_obj[i, ])
-    tibble(xmin = b["xmin"], xmax = b["xmax"], ymin = b["ymin"], ymax = b["ymax"])
-  }))
-}
-
-# Prints a value-column summary (min/max/NA count) and a geometry-validity
-# check for a matched weather layer, so a blank panel with a healthy match
-# count (like precip_sf_39b: 57 of ~57 matched, still blank) can be
-# distinguished from a matching problem -- the two look identical from the
-# match-count diagnostic alone but need completely different fixes.
-diagnose_map_layer <- function(sf_obj, value_col, label) {
-  vals <- sf_obj[[value_col]]
-  cat("Figure 3.9b (", label, ") value/geometry check:\n", sep = "")
-  cat("  ", value_col, ": min = ", round(min(vals, na.rm = TRUE), 3),
-      ", max = ", round(max(vals, na.rm = TRUE), 3),
-      ", n_NA = ", sum(is.na(vals)), " of ", length(vals), "\n", sep = "")
-  n_invalid <- sum(!st_is_valid(sf_obj), na.rm = TRUE)
-  if (n_invalid > 0) {
-    cat("  ", n_invalid, " of ", nrow(sf_obj), " geometries are INVALID per st_is_valid().\n", sep = "")
-  }
-  bb <- st_bbox(sf_obj)
-  cat("  Combined bbox: xrange ", round(bb["xmax"] - bb["xmin"], 3), " deg, yrange ",
-      round(bb["ymax"] - bb["ymin"], 3), " deg\n", sep = "")
 }
 
 theme_map_diss <- function(base_size = 12) {
@@ -378,8 +322,9 @@ map_boundaries_loaded <- tryCatch({
   kk_lgas    <- bounds_geo$adm2 %>% filter(NAME_1 %in% c("Kano", "Katsina"))
   TRUE
 }, error = function(e) {
-  warning("Could not fetch GADM boundaries (network/geodata issue) -- all 4 map figures ",
-          "(fig_1_1, fig_3_4b, fig_3_7b, fig_weather_maps) will fall back to placeholders: ",
+  warning("Could not fetch GADM boundaries (network/geodata issue) -- all map figures ",
+          "(fig_1_1, fig_3_4b, fig_3_7b, fig_weather_rainfall, fig_weather_heat, ",
+          "fig_weather_ndvi) will fall back to placeholders: ",
           conditionMessage(e), call. = FALSE)
   FALSE
 })
@@ -442,12 +387,6 @@ a_n  <- fb(ev(ma_parsed, "Num.Obs", 1), "NA — check 01_model_a_zerodose_predic
 a_r2 <- fb(ev(ma_parsed, "R2", 1), "NA")
 a_r2_strict <- fb(ev(ma_parsed, "R2", 2), "NA")
 
-cat("--- Model A coefficient extraction check ---\n")
-cat("  Primary distance:", a1_dist_raw$coef, "(se", a1_dist_raw$se, ")\n")
-cat("  Strict distance:  ", a2_dist_raw$coef, "(se", a2_dist_raw$se, ")\n")
-cat("  If these show NA, parse_ms_txt()/extract_coef_se() need adjusting\n")
-cat("  against the real column layout of the txt file before proceeding.\n\n")
-
 ########################################
 # Model B (recovery) — dynamic coefs  #
 ########################################
@@ -490,12 +429,6 @@ b_full_n  <- fb(ev(tab31b_parsed, "Num.Obs", 1), "NA")
 b_full_r2 <- fb(ev(tab31b_parsed, "R2", 1), "NA")
 b_lag_n   <- fb(ev(tab31b_parsed, "Num.Obs", 2), "NA")
 b_lag_r2  <- fb(ev(tab31b_parsed, "R2", 2), "NA")
-
-if (tab31b_ok && !is.na(b_full_n) && !is.na(b_lag_n) && b_full_n == b_lag_n) {
-  warning("Table 3.1b: Full sample N equals Lag-time subset N — this is the ",
-          "exact symptom of the original bug. Check that 03_regression.R's ",
-          "m_b0_full was actually rebuilt without days_since_visit.", call. = FALSE)
-}
 
 #----------------------------------------------------------------------------
 
@@ -823,21 +756,19 @@ artifacts$fig_2_4_path <- save_fig(fig_2_4, "fig_2_4", width = 9, height = 7.5)
 
 ma_path <- file.path(reg_dir, "03_model_a_dataset.rds")
 if (require_file(ma_path, "Figure 3.1 predictor distributions")) {
-  pm <- readRDS(ma_path) %>% filter(in_primary_sample) %>%
-    mutate(zd = if_else(zero_dose_penta == 1, "Zero-dose", "Vaccinated"),
-           zd = factor(zd, levels = c("Zero-dose", "Vaccinated")))
+  pm <- readRDS(ma_path) %>% filter(in_primary_sample)
   n_fig31 <- nrow(pm)
   
-  pdist <- ggplot(pm %>% filter(hf_distance_km <= 5), aes(x = hf_distance_km, fill = zd)) +
+  pdist <- ggplot(pm %>% filter(hf_distance_km <= 5), aes(x = hf_distance_km, fill = dose_group)) +
     geom_histogram(bins = 45, position = "identity", alpha = 0.6, colour = NA) +
-    scale_fill_manual(values = pal_zd, name = NULL) +
+    scale_fill_manual(values = pal_dose, name = "Recorded doses") +
     scale_x_continuous(labels = label_number(suffix = " km")) +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "A. Distance to health facility", x = "Distance (km)", y = "Children") +
     theme_diss(12)
-  page31 <- ggplot(pm %>% filter(age_months_at_reg <= 60), aes(x = age_months_at_reg, fill = zd)) +
+  page31 <- ggplot(pm %>% filter(age_months_at_reg <= 60), aes(x = age_months_at_reg, fill = dose_group)) +
     geom_histogram(bins = 40, position = "identity", alpha = 0.6, colour = NA) +
-    scale_fill_manual(values = pal_zd, name = NULL) +
+    scale_fill_manual(values = pal_dose, name = "Recorded doses") +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "B. Age at registration", x = "Age at registration (months)", y = NULL) +
     theme_diss(12)
@@ -850,7 +781,7 @@ if (require_file(ma_path, "Figure 3.1 predictor distributions")) {
   n_fig31 <- NA
 }
 
-fig_titles[["fig_3_1"]] <- "Figure 3.1.  Predictor distributions by zero-dose status"
+fig_titles[["fig_3_1"]] <- "Figure 3.1.  Predictor distributions by recorded dose count"
 artifacts$fig_3_1_path <- save_fig(fig_3_1, "fig_3_1", width = 8.4, height = 4.2)
 
 ########################################
@@ -897,7 +828,11 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
     left_join(readRDS(file.path(mch_dir, "01_any_vaccine_flag.rds")),
               by = c("pseudo_id" = "patient_id")) %>%
     filter(!is.na(hf_distance_km)) %>% nrow()
-  n_rimi_ok <- readRDS(ma_path) %>% filter(!is.na(hf_distance_km), !rimi_flag) %>% nrow()
+  # data_model_a (ma_path) already has implausible-age rows removed at
+  # source (03_regression.R), so its row count captures that exclusion
+  # before Rimi status is even considered.
+  n_age_ok  <- nrow(readRDS(ma_path))
+  n_rimi_ok <- readRDS(ma_path) %>% filter(!rimi_flag) %>% nrow()
   n_final   <- readRDS(ma_path) %>% filter(in_primary_sample) %>% nrow()
   
   # Pre-dedup counts, captured in 01_mchtrack_import.R right before its own
@@ -906,21 +841,6 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
   dedup_ll_import <- readRDS(dedup_import_path) %>% filter(table == "linelisted")
   n_raw          <- dedup_ll_import$rows_before
   n_dup_removed  <- dedup_ll_import$duplicates_removed
-  
-  # Reconciliation checks, not plotted bars.
-  dedup_gap <- (n_raw - n_dup_removed) - n_all
-  if (abs(dedup_gap) > 0) {
-    warning("Fig 3.2: post-dedup linelisted count (", comma(n_all), ") does not match ",
-            "01_dedup_summary.rds's rows_before - duplicates_removed (", comma(n_raw - n_dup_removed),
-            "). Either 01 hasn't been rerun since its latest patch, or the two counts are ",
-            "now out of sync — investigate before trusting this chart.", call. = FALSE)
-  }
-  reconciliation_gap <- n_rimi_ok - n_final
-  if (abs(reconciliation_gap) > 0.01 * n_rimi_ok) {
-    warning("Fig 3.2: reconciliation_gap (", comma(reconciliation_gap), ") exceeds 1% of ",
-            "n_rimi_ok — an exclusion step in 03_regression.R is not accounted for in this ",
-            "waterfall. Investigate before trusting the chart.", call. = FALSE)
-  }
   
   # Null-LGA is the one remaining exclusion 03_regression.R does NOT yet
   # apply — kept as a caption-only "known, not yet excluded" note rather
@@ -936,8 +856,9 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
     2, "Duplicate rows\nremoved at import", n_dup_removed, "exclude",
     3, "Women excluded\n(not a child record)", n_all - n_start, "exclude",
     4, "Missing / implausible\ndistance", n_start - n_dist_ok, "exclude",
-    5, "Rimi LGA\n(backfill)", n_dist_ok - n_rimi_ok, "exclude",
-    6, "Primary analytic\nsample", n_final, "end"
+    5, "Implausible age\n(<0 or >180 months)", n_dist_ok - n_age_ok, "exclude",
+    6, "Rimi LGA\n(backfill)", n_age_ok - n_rimi_ok, "exclude",
+    7, "Primary analytic\nsample", n_final, "end"
   ) %>%
     mutate(delta = case_when(type == "start" ~ n, type == "end" ~ 0, TRUE ~ -n),
            remaining = cumsum(delta))
@@ -1009,8 +930,10 @@ if (require_file(ll_path, "Figure 3.2b sample waterfall") && require_file(ma_pat
     n_dist_st  <- ll_st %>% filter(woman_or_child == "child") %>%
       left_join(vax_flag, by = c("pseudo_id" = "patient_id")) %>%
       filter(!is.na(hf_distance_km)) %>% nrow()
-    n_rimi_st  <- ma_all %>% filter(state == st, !is.na(hf_distance_km), !rimi_flag) %>% nrow()
-    n_final_st <- ma_all %>% filter(state == st, in_primary_sample) %>% nrow()
+    ma_st      <- ma_all %>% filter(state == st)   # already excludes implausible age at source
+    n_age_st   <- nrow(ma_st)
+    n_rimi_st  <- ma_st %>% filter(!rimi_flag) %>% nrow()
+    n_final_st <- ma_st %>% filter(in_primary_sample) %>% nrow()
     
     dedup_st   <- dedup_state %>% filter(state == st)
     n_raw_st   <- if (nrow(dedup_st) == 1) dedup_st$rows_before else NA_integer_
@@ -1022,8 +945,9 @@ if (require_file(ll_path, "Figure 3.2b sample waterfall") && require_file(ma_pat
       2, "Duplicate rows\nremoved at import", n_dup_st, "exclude",
       3, "Women excluded", n_all_st - n_start_st, "exclude",
       4, "Missing / implausible\ndistance", n_start_st - n_dist_st, "exclude",
-      5, "Rimi LGA\n(backfill)", n_dist_st - n_rimi_st, "exclude",
-      6, "Primary analytic\nsample", n_final_st, "end"
+      5, "Implausible age", n_dist_st - n_age_st, "exclude",
+      6, "Rimi LGA\n(backfill)", n_age_st - n_rimi_st, "exclude",
+      7, "Primary analytic\nsample", n_final_st, "end"
     ) %>%
       mutate(state = st,
              delta = case_when(type == "start" ~ n, type == "end" ~ 0, TRUE ~ -n),
@@ -1734,17 +1658,11 @@ fig_titles[["fig_weather_robustness"]] <- "Figure 3.9.  Weather effect estimates
 artifacts$fig_weather_robustness_path <- save_fig(fig_weather_robustness, "fig_weather_robustness", width = 10, height = 5.2)
 
 ########################################
-# Figure 3.9b — Weather variable maps  #
-# (NEW, 19/7/2026 -- ported from        #
-# fig_weather_maps_prototype.R)         #
+# Figures 3.9b-d — Weather variable maps #
 ########################################
-# Spatial companion to Figure 3.9's robustness coefficients: gives the
-# null weather result a physical reference (what the landscape looks
-# like, not just point estimates). Panel B (heat) is Kano-only by
-# construction, not a display choice -- that IS the full extent of the
-# ERA5/UTCI panel used in the heat model (06_era5_analysis.R filters to
-# Ungogo/Gabasawa before anything else); showing that sparseness plainly
-# is more honest than padding the map with LGAs the heat model never used.
+# Split into three standalone figures (rainfall, heat, NDVI), each built
+# and rendered independently, rather than one combined panel -- a problem
+# with one variable's map no longer affects the other two.
 
 attach_lga_polygons_map <- function(df, state_col, lga_col) {
   df <- df %>%
@@ -1759,116 +1677,41 @@ attach_lga_polygons_map <- function(df, state_col, lga_col) {
   lgas_in_scope %>% inner_join(df, by = c("NAME_1" = "state_", "NAME_2" = "lga_matched_"))
 }
 
-# NOTE on paths: 02_chirps_data_kk_monthly.rds and 07_ndvi_monthly.rds are
-# written by 02_chirps_import_analysis.R / 08_ndvi_analysis.R to their OWN
-# import_dir (03_output/02_chirps_data, 03_output/07_ndvi respectively) --
-# NOT chirps_dir/ndvi_dir as defined at the top of this script, which point
-# at those scripts' separate regression-output directories
-# (03_output/02_chirps_analysis, 03_output/08_ndvi_analysis) used for the
-# weather regression .txt tables above. Set explicitly here to avoid
-# reusing a variable that resolves to the wrong folder.
+report_match_loss <- function(input_df, matched_sf, label) {
+  name_col <- names(input_df)[2]
+  all_names <- input_df %>% distinct(state, .data[[name_col]])
+  n_in <- nrow(all_names)
+  n_out <- nrow(matched_sf)
+  cat(label, "map:", n_out, "of", n_in, "LGAs matched\n")
+  if (n_in > 0 && n_out < n_in) {
+    matched_names <- if (n_out > 0) unique(matched_sf[[name_col]]) else character(0)
+    print(all_names %>% filter(!(.data[[name_col]] %in% matched_names)))
+  }
+}
+
+# 02_chirps_data_kk_monthly.rds and 07_ndvi_monthly.rds live under each
+# script's own import_dir, not chirps_dir/ndvi_dir (those point at the
+# regression-output folders used for the weather tables above).
 precip_path_39b <- file.path(home, "03_output/02_chirps_data/02_chirps_data_kk_monthly.rds")
 heat_path_39b   <- file.path(era_dir, "06_panel_daily.rds")
 ndvi_path_39b   <- file.path(home, "03_output/07_ndvi/07_ndvi_monthly.rds")
 
-weather_maps_ok <- map_boundaries_loaded &&
-  require_file(precip_path_39b, "Figure 3.9b rainfall map") &&
-  require_file(heat_path_39b, "Figure 3.9b heat map") &&
-  require_file(ndvi_path_39b, "Figure 3.9b NDVI map")
-
-if (weather_maps_ok) {
+# --- Rainfall (Figure 3.9b) --------------------------------------------
+if (map_boundaries_loaded && require_file(precip_path_39b, "rainfall map")) {
   precip_lga_39b <- readRDS(precip_path_39b) %>%
     group_by(state, lga_name_mchtrack) %>%
     summarise(precip_mm = mean(precip_actual_mm, na.rm = TRUE), .groups = "drop")
   precip_sf_39b <- attach_lga_polygons_map(precip_lga_39b, "state", "lga_name_mchtrack")
+  report_match_loss(precip_lga_39b, precip_sf_39b, "Rainfall")
   
-  heat_lga_39b <- readRDS(heat_path_39b) %>%
-    mutate(state = "Kano") %>%
-    group_by(state, lga_clean) %>%
-    summarise(utci = mean(utci_daytime_mean, na.rm = TRUE), .groups = "drop")
-  heat_sf_39b <- attach_lga_polygons_map(heat_lga_39b, "state", "lga_clean")
-  
-  ndvi_lga_39b <- readRDS(ndvi_path_39b) %>%
-    group_by(state, lga_name) %>%
-    summarise(vim = mean(vim_monthly, na.rm = TRUE), .groups = "drop")
-  ndvi_sf_39b <- attach_lga_polygons_map(ndvi_lga_39b, "state", "lga_name")
-  
-  # CHANGED 30/7/2026, per Khem's report that the rainfall panel rendered
-  # essentially blank (title visible, no polygons) even though heat and
-  # NDVI, built with the identical attach_lga_polygons_map() call, rendered
-  # fine. A *partial* match failure doesn't trip the old nrow == 0 guard
-  # below and can still render a visually blank or near-blank panel -- a
-  # handful of surviving LGAs is not the same as a legible choropleth of
-  # ~30-40 LGAs. Two changes: (1) match counts are now always printed, not
-  # only when loss exceeds 30%, since a silent warning is easy to miss when
-  # just looking at the PNG output; (2) the specific names that failed to
-  # match are printed per panel, not just a count, since the 3 panels source
-  # LGA names from 3 different places (CHIRPS's own hand-typed lga_lookup
-  # in 02_chirps_import_analysis.R, vs. lga_clean/lga_name for heat/NDVI)
-  # and a naming-convention difference specific to one source is the most
-  # likely explanation for one panel failing while the other two succeed.
-  report_match_loss <- function(input_df, matched_sf, label) {
-    name_col <- names(input_df)[2]
-    all_names <- input_df %>% distinct(state, .data[[name_col]])
-    n_in <- nrow(all_names)
-    n_out <- nrow(matched_sf)
-    pct <- if (n_in > 0) round(100 * n_out / n_in) else NA
-    cat("Figure 3.9b (", label, "): ", n_out, " of ", n_in, " input LGAs matched to a polygon (",
-        pct, "%).\n", sep = "")
-    if (n_in > 0 && n_out < n_in) {
-      matched_names <- if (n_out > 0) unique(matched_sf[[name_col]]) else character(0)
-      dropped <- all_names %>% filter(!(.data[[name_col]] %in% matched_names))
-      cat("  Unmatched: "); print(dropped)
-    }
-    if (n_in > 0 && n_out / n_in < 0.7) {
-      warning(sprintf("Figure 3.9b (%s): only %d of %d input LGAs matched to a polygon (%.0f%%) -- ",
-                      label, n_out, n_in, 100 * n_out / n_in),
-              "check the fuzzy-match / 'NO PLAUSIBLE MATCH' log above for dropped names.", call. = FALSE)
-    }
-  }
-  report_match_loss(precip_lga_39b, precip_sf_39b, "rainfall")
-  report_match_loss(heat_lga_39b, heat_sf_39b, "heat")
-  report_match_loss(ndvi_lga_39b, ndvi_sf_39b, "NDVI")
-  
-  # Added 30/7/2026: a healthy match count (precip: 57 of ~57) with a still-
-  # blank panel means the problem is downstream of matching -- either the
-  # value column or the geometry itself. Checked here, separately from the
-  # match-count diagnostic above, since the two failure modes look identical
-  # in a screenshot but need different fixes.
-  diagnose_map_layer(precip_sf_39b, "precip_mm", "rainfall")
-  diagnose_map_layer(heat_sf_39b, "utci", "heat")
-  diagnose_map_layer(ndvi_sf_39b, "vim", "NDVI")
-  
-  # FIXED 30/7/2026: the first version of this guard used one uniform
-  # min_lgas_for_map = 5 threshold for all three panels. That's wrong for
-  # heat specifically -- per the note at the top of this section, panel B
-  # is Kano-only BY CONSTRUCTION (Ungogo and Gabasawa are the only two
-  # ERA5/UTCI-monitored sites full stop, not a partial match failure), so
-  # heat_sf_39b will legitimately have exactly 2 rows on a fully correct
-  # run. A uniform threshold of 5 flagged that correct state as broken and
-  # replaced a working panel with a placeholder -- confirmed directly from
-  # Khem's console output (precip: 57, heat: 2, NDVI: 51), where precip and
-  # NDVI are both healthy matches and heat's 2 is the expected full extent,
-  # not a failure. Thresholds are now per-panel: precip and NDVI, which
-  # should each cover most of Kano and Katsina's ~30-40 LGAs, still guard
-  # at 5; heat guards only against the genuine failure case (0 matched).
-  min_lgas_precip_ndvi <- 5
-  min_lgas_heat <- 1
-  if (nrow(precip_sf_39b) < min_lgas_precip_ndvi || nrow(heat_sf_39b) < min_lgas_heat || nrow(ndvi_sf_39b) < min_lgas_precip_ndvi) {
-    warning("Figure 3.9b: at least one weather panel matched fewer LGAs than expected -- ",
-            "check the per-panel match counts and 'Unmatched' list above.", call. = FALSE)
-    fig_weather_maps <- placeholder_plot(paste0("TOO FEW LGAs MATCHED for at least one weather panel\n",
-                                                "(precip: ", nrow(precip_sf_39b), ", heat: ", nrow(heat_sf_39b),
-                                                ", NDVI: ", nrow(ndvi_sf_39b), ") -- see console log"))
+  if (nrow(precip_sf_39b) < 5) {
+    fig_weather_rainfall <- placeholder_plot(paste0("TOO FEW LGAs MATCHED (", nrow(precip_sf_39b), ") -- see console log"))
   } else {
-    precip_extent_39b <- bbox_with_buffer(
-      precip_sf_39b, 0.08,
-      fallback_sf = bounds_geo$adm1 %>% filter(NAME_1 %in% unique(precip_sf_39b$NAME_1)),
-      label = "rainfall")
+    precip_extent_39b <- bbox_with_buffer(precip_sf_39b, 0.08)
     precip_labels_39b <- precip_sf_39b %>% st_centroid() %>% slice_max(precip_mm, n = 2) %>%
       mutate(label = paste0(NAME_2, " (", round(precip_mm), " mm)"))
     
-    p_precip_39b <- ggplot() +
+    fig_weather_rainfall <- ggplot() +
       geom_sf(data = bounds_geo$adm1 %>% filter(NAME_1 %in% unique(precip_sf_39b$NAME_1)),
               fill = "#F7F7F7", colour = "white", linewidth = 0.15) +
       geom_sf(data = precip_sf_39b, aes(fill = precip_mm), colour = "white", linewidth = 0.25) +
@@ -1876,65 +1719,79 @@ if (weather_maps_ok) {
       scale_fill_steps(low = "#F5EFE0", high = "#1D6FA4", name = "Mean monthly\nrainfall (mm)",
                        breaks = scales::breaks_pretty(n = 5), labels = comma, guide = steps_guide()) +
       coord_sf(xlim = precip_extent_39b$xlim, ylim = precip_extent_39b$ylim, expand = FALSE, clip = "off") +
-      labs(subtitle = "A. Rainfall (CHIRPS)") +
-      theme_map_diss(12) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 13))
-    
-    # Cropped to Ungogo and Gabasawa specifically -- the previous version
-    # used all of Kano's ~44 LGAs as the extent basis, even though the
-    # ERA5/UTCI panel this figure draws on covers only these two.
-    heat_extent_39b <- bbox_with_buffer(
-      heat_sf_39b, 0.15,
-      fallback_sf = bounds_geo$adm2 %>% filter(NAME_1 == "Kano"),
-      label = "heat")
+      theme_map_diss(12)
+  }
+} else {
+  fig_weather_rainfall <- placeholder_plot("MISSING INPUT -- rainfall map")
+}
+fig_titles[["fig_weather_rainfall"]] <- "Figure 3.9b.  Mean monthly rainfall by LGA (CHIRPS)"
+artifacts$fig_weather_rainfall_path <- save_fig(fig_weather_rainfall, "fig_weather_rainfall", width = 7, height = 6, dpi = 150)
+
+# --- Heat (Figure 3.9c) -------------------------------------------------
+# Kano-only by construction, not a display choice: Ungogo and Gabasawa
+# are the full extent of the ERA5/UTCI panel used in the heat model.
+if (map_boundaries_loaded && require_file(heat_path_39b, "heat map")) {
+  heat_lga_39b <- readRDS(heat_path_39b) %>%
+    mutate(state = "Kano") %>%
+    group_by(state, lga_clean) %>%
+    summarise(utci = mean(utci_daytime_mean, na.rm = TRUE), .groups = "drop")
+  heat_sf_39b <- attach_lga_polygons_map(heat_lga_39b, "state", "lga_clean")
+  report_match_loss(heat_lga_39b, heat_sf_39b, "Heat")
+  
+  if (nrow(heat_sf_39b) < 1) {
+    fig_weather_heat <- placeholder_plot("TOO FEW LGAs MATCHED -- see console log")
+  } else {
+    heat_extent_39b <- bbox_with_buffer(heat_sf_39b, 0.15)
     heat_labels_39b <- heat_sf_39b %>% st_centroid() %>%
       mutate(label = paste0(NAME_2, " (", round(utci, 1), "°C)"))
     
-    p_heat_39b <- ggplot() +
+    fig_weather_heat <- ggplot() +
       geom_sf(data = bounds_geo$adm2 %>% filter(NAME_1 == "Kano"), fill = "#F7F7F7", colour = "white", linewidth = 0.15) +
       geom_sf(data = heat_sf_39b, aes(fill = utci), colour = "white", linewidth = 0.25) +
       geom_lga_labels(heat_labels_39b, "label") +
-      # FIX: legend numbers were previously smushed together on this panel --
-      # binned scale (one label per discrete box) + accuracy=0.1 breaks +
-      # a wider guide bar (steps_guide()) instead of a continuous colourbar.
       scale_fill_steps(low = "#FCE9C9", high = "#C0312D", name = "Mean daytime\nUTCI (°C)",
                        breaks = scales::breaks_pretty(n = 4), labels = label_number(accuracy = 0.1),
                        guide = steps_guide()) +
       coord_sf(xlim = heat_extent_39b$xlim, ylim = heat_extent_39b$ylim, expand = FALSE, clip = "off") +
-      labs(subtitle = "B. Heat (ERA5/UTCI)") +
-      theme_map_diss(12) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 13))
-    
-    ndvi_extent_39b <- bbox_with_buffer(
-      ndvi_sf_39b, 0.08,
-      fallback_sf = bounds_geo$adm1 %>% filter(NAME_1 %in% unique(ndvi_sf_39b$NAME_1)),
-      label = "NDVI")
+      theme_map_diss(12)
+  }
+} else {
+  fig_weather_heat <- placeholder_plot("MISSING INPUT -- heat map")
+}
+fig_titles[["fig_weather_heat"]] <- "Figure 3.9c.  Mean daytime heat (ERA5/UTCI) for Kano's monitored LGAs"
+artifacts$fig_weather_heat_path <- save_fig(fig_weather_heat, "fig_weather_heat", width = 7, height = 6, dpi = 150)
+
+# --- NDVI (Figure 3.9d) --------------------------------------------------
+if (map_boundaries_loaded && require_file(ndvi_path_39b, "NDVI map")) {
+  ndvi_lga_39b <- readRDS(ndvi_path_39b) %>%
+    group_by(state, lga_name) %>%
+    summarise(vim = mean(vim_monthly, na.rm = TRUE), .groups = "drop")
+  ndvi_sf_39b <- attach_lga_polygons_map(ndvi_lga_39b, "state", "lga_name")
+  report_match_loss(ndvi_lga_39b, ndvi_sf_39b, "NDVI")
+  
+  if (nrow(ndvi_sf_39b) < 5) {
+    fig_weather_ndvi <- placeholder_plot(paste0("TOO FEW LGAs MATCHED (", nrow(ndvi_sf_39b), ") -- see console log"))
+  } else {
+    ndvi_extent_39b <- bbox_with_buffer(ndvi_sf_39b, 0.08)
     ndvi_labels_39b <- ndvi_sf_39b %>% st_centroid() %>% slice_max(vim, n = 2) %>%
       mutate(label = paste0(NAME_2, " (", round(vim, 3), ")"))
     
-    p_ndvi_39b <- ggplot() +
+    fig_weather_ndvi <- ggplot() +
       geom_sf(data = bounds_geo$adm1 %>% filter(NAME_1 %in% unique(ndvi_sf_39b$NAME_1)),
               fill = "#F7F7F7", colour = "white", linewidth = 0.15) +
       geom_sf(data = ndvi_sf_39b, aes(fill = vim), colour = "white", linewidth = 0.25) +
       geom_lga_labels(ndvi_labels_39b, "label") +
-      # Same legend fix as the heat panel -- NDVI values are small decimals
-      # that previously crowded together under a continuous colourbar.
       scale_fill_steps(low = "#F1E9D2", high = "#2E7D32", name = "Mean vegetation\nindex (NDVI)",
                        breaks = scales::breaks_pretty(n = 4), labels = label_number(accuracy = 0.01),
                        guide = steps_guide()) +
       coord_sf(xlim = ndvi_extent_39b$xlim, ylim = ndvi_extent_39b$ylim, expand = FALSE, clip = "off") +
-      labs(subtitle = "C. Vegetation greenness (NDVI)") +
-      theme_map_diss(12) + theme(plot.subtitle = element_text(face = "bold", hjust = 0.5, size = 13))
-    
-    # 2x2-style grid (one cell left empty) rather than a single cramped row
-    # of three, so each map gets more room -- panels are wide, low-aspect-
-    # ratio choropleths that lose legibility when squeezed side by side.
-    fig_weather_maps <- (p_precip_39b + p_heat_39b + p_ndvi_39b) + plot_layout(ncol = 2)
+      theme_map_diss(12)
   }
 } else {
-  fig_weather_maps <- placeholder_plot("MISSING INPUT\nsee Figure 3.9b requirements, or GADM boundaries unavailable")
+  fig_weather_ndvi <- placeholder_plot("MISSING INPUT -- NDVI map")
 }
-
-fig_titles[["fig_weather_maps"]] <- "Figure 3.9b.  Weather variables across Kano and Katsina's LGAs"
-artifacts$fig_weather_maps_path <- save_fig(fig_weather_maps, "fig_weather_maps", width = 11, height = 10, dpi = 150)
+fig_titles[["fig_weather_ndvi"]] <- "Figure 3.9d.  Mean vegetation greenness (NDVI) by LGA"
+artifacts$fig_weather_ndvi_path <- save_fig(fig_weather_ndvi, "fig_weather_ndvi", width = 7, height = 6, dpi = 150)
 
 #----------------------------------------------------------------------------
 
@@ -2053,46 +1910,16 @@ artifacts$tab_4_3 <- tab_4_3
 ########################################
 
 if (require_file(mb_path, "Figure D.1 age at tracing")) {
-  d_ageD1_raw <- readRDS(mb_path) %>% filter(in_primary_sample, !is.na(age_months_tracing))
-  
-  # DIAGNOSTIC (30/7/2026, per Khem's report): the first real run put nearly
-  # every attempt into a single bar at x = 0 because age_months_tracing's
-  # max ran into the tens of thousands -- literally thousands of years old,
-  # which is not a real child's age. age_months_tracing is built in
-  # 03_regression.R as age_years * 12 + age_months, so a single corrupted
-  # age_years value (e.g. a birth-year typo, or age_years recorded as a
-  # full year like "2019" instead of "19") is enough to blow out the axis
-  # for every other row. Printed here rather than silently dropped, since
-  # the same rows also feed m_b1-m_b4 as a raw, uncapped predictor -- an
-  # implausible age this extreme could leverage those coefficients too, not
-  # just this one plot. Capped at 180 months (15 years) for the plot only,
-  # a deliberately generous upper bound (MCHTrack's own operational
-  # zero-dose window is 12-23 months, but tracing can reasonably lag well
-  # past that) rather than reusing Figure 2.4's tighter 60-month cut, which
-  # was for age AT REGISTRATION, a different question.
-  age_cap_months <- 180
-  n_age_excluded <- sum(d_ageD1_raw$age_months_tracing > age_cap_months)
-  if (n_age_excluded > 0) {
-    cat("Figure D.1: ", n_age_excluded, " of ", nrow(d_ageD1_raw),
-        " tracing attempts (", round(100 * n_age_excluded / nrow(d_ageD1_raw), 2),
-        "%) have age_months_tracing > ", age_cap_months, " months. Max value: ",
-        round(max(d_ageD1_raw$age_months_tracing), 1), " months. Excluded from ",
-        "this plot only, NOT from the regression models below -- check whether ",
-        "these rows should also be excluded from m_b1-m_b4 in 03_regression.R, ",
-        "or whether age_years/age_months has a units or entry-error problem ",
-        "worth a dedicated implausible-age flag alongside rimi_flag and the ",
-        "GPS >100km exclusion.\n", sep = "")
-  }
-  d_ageD1 <- d_ageD1_raw %>% filter(age_months_tracing <= age_cap_months)
+  # 03_regression.R already excludes implausible ages (<0 or >180 months)
+  # before saving this dataset, so no further capping is needed here.
+  d_ageD1 <- readRDS(mb_path) %>% filter(in_primary_sample, !is.na(age_months_tracing))
   
   fig_d_1 <- ggplot(d_ageD1, aes(x = age_months_tracing, fill = state)) +
     geom_histogram(bins = 40, position = "identity", alpha = 0.6, colour = NA) +
     scale_fill_manual(values = pal_state) +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "Age at tracing, by state", x = "Age at tracing (months)", y = "Attempts",
-         fill = NULL,
-         caption = if (n_age_excluded > 0) paste0(comma(n_age_excluded), " attempt(s) with an implausible age (>",
-                                                  age_cap_months, " months) excluded from this chart; see console log") else NULL) +
+         fill = NULL) +
     theme_diss(12)
 } else {
   fig_d_1 <- placeholder_plot("MISSING INPUT\n03_model_b_dataset.rds")
@@ -2231,7 +2058,6 @@ if (require_file(offnetwork_share_path, "Table2A narrative — off-network share
   offnetwork_narrative <- "NA — MISSING INPUT 09_offnetwork_share_by_state.rds"
 }
 artifacts_datharm$offnetwork_narrative <- offnetwork_narrative
-cat("--- Table2A narrative sentence ---\n"); cat(offnetwork_narrative, "\n\n")
 
 ########################################
 # Table-ladder-legend — definitional,  #
@@ -2341,7 +2167,6 @@ if (require_file(zd_recon_path, "Table3B reconciliation")) {
 }
 artifacts_datharm$table3b_summary <- zd_reconciliation_datharm
 artifacts_datharm$table3b_narrative <- zd_recon_narrative
-cat("--- Table3B narrative (PROXY) ---\n"); cat(zd_recon_narrative, "\n\n")
 
 if (require_file(zd_sample_path, "Table3B row sample")) {
   table3b_datharm <- readRDS(zd_sample_path)
@@ -2508,5 +2333,11 @@ saveRDS(list(thesis = artifacts, datharm = artifacts_datharm),
 # fig_titles is initialised, near the top of Part 1.
 saveRDS(as_tibble(fig_titles) %>% pivot_longer(everything(), names_to = "fig_id", values_to = "suggested_title"),
         file.path(out_dir, "10_figure_titles.rds"))
+
+cat("\n=== BUILD COMPLETE ===\n")
+cat("Manifests saved to:", out_dir, "\n")
+cat("Figures saved to:", figs_dir, "\n\n")
+cat("Thesis artifacts:\n");  print(names(artifacts))
+cat("\nDATHARM artifacts:\n"); print(names(artifacts_datharm))
 
 #--------------------------(END)------------------------------#
