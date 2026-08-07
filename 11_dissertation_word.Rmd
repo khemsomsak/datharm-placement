@@ -3,11 +3,9 @@ title: "Lost and Found: Tracking Unvaccinated Children and the Search for a Weat
 subtitle: "MSc in International Health and Tropical Medicine, Nuffield Department of Medicine, University of Oxford"
 author: "Examination Candidate Number: 1102514"
 date: "`r {mo<-c('January','February','March','April','May','June','July','August','September','October','November','December'); y<-as.integer(format(Sys.Date(),'%Y')); if (y>2100) y<-y-543; sprintf('%d %s %d', as.integer(format(Sys.Date(),'%d')), mo[as.integer(format(Sys.Date(),'%m'))], y)}`"
-toc-title: "Table of Contents"
 output:
   word_document:
-    toc: true
-    toc_depth: 3
+    toc: false
     number_sections: false
     fig_caption: true
     reference_docx: 11_word_reference.docx
@@ -81,6 +79,8 @@ During the writing phase, I used it for drafting and restructuring prose in resp
 :::
 
 ```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents" /><w:docPartUnique /></w:docPartObj></w:sdtPr><w:sdtContent><w:p><w:pPr><w:pStyle w:val="TOCHeading" /></w:pPr><w:r><w:t xml:space="preserve">Table of Contents</w:t></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="begin" w:dirty="true" /><w:instrText xml:space="preserve">TOC \o "1-3" \h \z \u</w:instrText><w:fldChar w:fldCharType="separate" /><w:t xml:space="preserve">Right-click and choose "Update Field" (or press Ctrl+A then F9) to generate the table of contents.</w:t><w:fldChar w:fldCharType="end" /></w:r></w:p></w:sdtContent></w:sdt>
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 

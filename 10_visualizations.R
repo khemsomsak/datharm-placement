@@ -357,7 +357,16 @@ theme_map_diss <- function(base_size = 12) {
       legend.title    = element_text(size = base_size + 0.5, face = "bold"),
       legend.text     = element_text(size = base_size),
       legend.key.size = unit(1.3, "lines"), legend.spacing.x = unit(0.4, "cm"),
-      legend.spacing.y = unit(0.15, "cm"),
+      # legend.spacing.y widened 0.15cm -> 0.5cm, legend.box.spacing added
+      # (Aug 2026 crowding pass): with legend.box = "vertical" stacking the
+      # point-size legend directly above the colour/steps legend, 0.15cm
+      # left almost no visible gap between them once legend text grew to a
+      # legible size -- confirmed by render on fig_3_4b ("Children in ward
+      # (N)" sitting right on top of "Residual..."). legend.box.spacing
+      # controls the gap BETWEEN the two guide boxes; legend.spacing.y alone
+      # does not fully cover that gap.
+      legend.spacing.y = unit(0.5, "cm"),
+      legend.box.spacing = unit(0.5, "cm"),
       # Tightened from t=10,r=18,b=8,l=18 -- theme_void() maps have no axis
       # text eating into this margin, so the wide left/right padding was
       # just dead space once the legend/labels below were enlarged.
@@ -388,8 +397,18 @@ geom_lga_labels <- function(label_df, label_col = "label", seed = 2026, size_pt 
 # panels, and (paired with scale_*_steps()/steps2() below instead of a
 # continuous gradient) makes mid-range values on the point maps visually
 # distinct from each other, not just from the two extremes of the scale.
-steps_guide <- function(barwidth = 6, barheight = 0.45) {
-  guide_coloursteps(barwidth = unit(barwidth, "cm"), barheight = unit(barheight, "cm"), show.limits = TRUE)
+# FIX (Aug 2026 crowding pass): show.limits defaulted to TRUE, which forces
+# the scale's exact numeric min/max (e.g. a data-driven 59.4, or 76) to be
+# added as an ADDITIONAL labelled tick right next to the nearest "pretty"
+# break, with no minimum-gap enforcement -- confirmed by render, this is
+# what produced smushed labels like "4059.4" on fig_3_4b's colour legend
+# and "6076%" on fig_3_7b's. Callers now pass their own round, evenly-
+# spaced `breaks` sized off a rounded `limits` (see fig_3_4b/fig_3_7b/
+# fig_weather_heat below) instead of relying on the exact data extreme
+# being individually labelled. Bar widened (6cm -> 7.5cm) so whatever
+# breaks remain still have visible room either way.
+steps_guide <- function(barwidth = 7.5, barheight = 0.55, show.limits = FALSE) {
+  guide_coloursteps(barwidth = unit(barwidth, "cm"), barheight = unit(barheight, "cm"), show.limits = show.limits)
 }
 
 # Boundary fetch is a network call, not a local file -- wrapped so a
@@ -611,17 +630,26 @@ boxes <- tibble(
 # match (txt_mm() converts the resulting pt size to the mm geom_text wants).
 bs_2_1 <- bs_for_width(8.6)
 fig_2_1 <- ggplot() +
-  annotate("rect", xmin = 0.45, xmax = 7.75, ymin = -0.55, ymax = 0.55,
+  # xmax/xmin widened slightly (0.45/7.75 -> 0.38/7.82) to match the wider
+  # boxes below -- otherwise the first/last box would poke outside this
+  # dashed boundary rectangle.
+  annotate("rect", xmin = 0.38, xmax = 7.82, ymin = -0.55, ymax = 0.55,
            fill = "#EAF2FB", colour = "#1D6FA4", linewidth = 0.4, linetype = "dashed") +
-  annotate("text", x = 7.68, y = 0.47, label = "MCHTrack system boundary",
+  annotate("text", x = 7.75, y = 0.47, label = "MCHTrack system boundary",
            hjust = 1, size = txt_mm(9.5 * bs_2_1 / 12), colour = "#1D6FA4", fontface = "italic", family = "serif") +
-  geom_rect(data = boxes, aes(xmin = x - 0.5, xmax = x + 0.5, ymin = -0.32, ymax = 0.32),
+  # FIX (Aug 2026 crowding pass): box half-width widened 0.5 -> 0.58, and
+  # the bold box-label / italic dataset-label font scale factors trimmed
+  # slightly (10->9.2, 8.4->7.8) -- "enumeration" (11 characters) at this
+  # figure's legible bold label size was wider than a 0.5-half-width box,
+  # overflowing past its left edge (confirmed by render). Arrow start/end
+  # x-positions widened to match the new box edges.
+  geom_rect(data = boxes, aes(xmin = x - 0.58, xmax = x + 0.58, ymin = -0.32, ymax = 0.32),
             fill = "white", colour = "#333333", linewidth = 0.6) +
   geom_text(data = boxes, aes(x = x, y = 0.1, label = label),
-            size = txt_mm(10 * bs_2_1 / 12), fontface = "bold", lineheight = 0.9, family = "serif") +
+            size = txt_mm(9.2 * bs_2_1 / 12), fontface = "bold", lineheight = 0.9, family = "serif") +
   geom_text(data = boxes, aes(x = x, y = -0.18, label = dataset),
-            size = txt_mm(8.4 * bs_2_1 / 12), colour = "#555555", fontface = "italic", family = "serif") +
-  annotate("segment", x = c(1.55, 3.55, 5.55), xend = c(2.45, 4.45, 6.45), y = 0, yend = 0,
+            size = txt_mm(7.8 * bs_2_1 / 12), colour = "#555555", fontface = "italic", family = "serif") +
+  annotate("segment", x = c(1.63, 3.63, 5.63), xend = c(2.37, 4.37, 6.37), y = 0, yend = 0,
            arrow = arrow(length = unit(0.14, "cm"), type = "closed"), colour = "#333333", linewidth = 0.5) +
   annotate("text", x = 1, y = -0.72, label = "~1 in 5 households\nnot reached in enumeration",
            size = txt_mm(8.4 * bs_2_1 / 12), colour = "#C0312D", fontface = "italic", family = "serif") +
@@ -631,7 +659,7 @@ fig_2_1 <- ggplot() +
            size = txt_mm(8.4 * bs_2_1 / 12), colour = "#BA7517", fontface = "italic", family = "serif") +
   annotate("segment", x = 7, xend = 7, y = -0.32, yend = -0.5, colour = "#BA7517", linewidth = 0.4,
            linetype = "dotted", arrow = arrow(length = unit(0.1, "cm"), type = "closed")) +
-  scale_x_continuous(limits = c(0.4, 8.0)) + scale_y_continuous(limits = c(-0.95, 0.62)) +
+  scale_x_continuous(limits = c(0.3, 8.1)) + scale_y_continuous(limits = c(-0.95, 0.62)) +
   theme_void() +
   theme(plot.title = element_text(family = "serif", face = "bold", size = bs_2_1, margin = margin(b = 6, l = 2)))
 
@@ -717,8 +745,17 @@ if (require_file(lga_panel_path, "Figure 2.2b data reliability by state")) {
     annotate("rect", xmin = katsina_cutoff, xmax = max(reliability_monthly$year_month_date),
              ymin = -Inf, ymax = Inf, fill = "#C0312D", alpha = 0.06) +
     geom_vline(xintercept = katsina_cutoff, linetype = "dashed", colour = "#C0312D", linewidth = 0.4) +
+    # FIX (Aug 2026 crowding pass): hjust flipped from -0.05 (label starting
+    # just right of the cutoff line, into the narrow sliver of remaining
+    # months) to 1.05 (label ending just past the cutoff line, extending
+    # back over the years of preceding data where there is ample room).
+    # The cutoff sits near the right edge of the whole date range, so
+    # anchoring the label to ITS right -- as before -- left almost no room
+    # before the plot's own right edge and the text was hard-clipped
+    # (confirmed by render: "...weather model beyond this point" displayed
+    # as just "Katsin" / "model", the rest missing).
     annotate("text", x = katsina_cutoff, y = max(reliability_monthly$imm_visits, na.rm = TRUE),
-             label = "Katsina excluded from weather\nmodel beyond this point", hjust = -0.05, vjust = 1,
+             label = "Katsina excluded from weather\nmodel beyond this point", hjust = 1.05, vjust = 1,
              size = txt_mm(9.5 * bs_for_width(8.5) / 11), colour = "#C0312D", fontface = "italic", family = "serif") +
     geom_line(linewidth = 0.7) +
     geom_point(size = 1.3) +
@@ -859,7 +896,7 @@ if (require_file(bl_path, "Figure 2.4 baseline distributions")) {
     plot_layout(ncol = 2, guides = "collect") +
     plot_annotation(
       theme = theme(legend.position = "bottom",
-                    legend.text = element_text(family = "serif", size = 11 * bs_2_4 / 12)))
+                    legend.text = element_text(family = "serif", size = bs_2_4 * 1.15)))
 } else {
   fig_2_4 <- placeholder_plot("MISSING INPUT\n03_model_a_dataset.rds")
 }
@@ -1104,15 +1141,21 @@ if (require_file(ll_path, "Figure 3.2b sample waterfall") && require_file(ma_pat
     n_raw_st   <- if (nrow(dedup_st) == 1) dedup_st$rows_before else NA_integer_
     n_dup_st   <- if (nrow(dedup_st) == 1) dedup_st$duplicates_removed else NA_integer_
     
+    # Labels shortened to single-line tags (Aug 2026 crowding-pass fix,
+    # same rationale as Figure 3.2's own label shortening above): these now
+    # sit on a real, angled x-axis (see theme() below) instead of being
+    # hand-drawn text inside the plot, so a 2-line wrapped label was no
+    # longer needed to fit the space -- and a single line reads more
+    # cleanly at a 90-degree rotation than a wrapped one does.
     tribble(
       ~step, ~label, ~n, ~type,
-      1, "Raw linelisted\n(pre-dedup)", n_raw_st, "start",
-      2, "Duplicate rows\nremoved at import", n_dup_st, "exclude",
+      1, "Raw linelisted", n_raw_st, "start",
+      2, "Duplicate rows", n_dup_st, "exclude",
       3, "Women excluded", n_all_st - n_start_st, "exclude",
-      4, "Missing / implausible\ndistance", n_start_st - n_dist_st, "exclude",
+      4, "Missing/implausible dist.", n_start_st - n_dist_st, "exclude",
       5, "Implausible age", n_dist_st - n_age_st, "exclude",
-      6, "Rimi LGA\n(backfill)", n_age_st - n_rimi_st, "exclude",
-      7, "Primary analytic\nsample", n_final_st, "end"
+      6, "Rimi LGA (backfill)", n_age_st - n_rimi_st, "exclude",
+      7, "Analytic sample", n_final_st, "end"
     ) %>%
       mutate(state = st,
              delta = case_when(type == "start" ~ n, type == "end" ~ 0, TRUE ~ -n),
@@ -1132,55 +1175,78 @@ if (require_file(ll_path, "Figure 3.2b sample waterfall") && require_file(ma_pat
     pull(lab) %>% paste(collapse = "  ·  ")
   artifacts$fig_3_2b_not_yet <- not_yet_lab
   
-  # Font sizes parameterised off bs_for_width() (Aug 2026 legibility fix,
-  # matching Figure 3.2 above) -- this figure was missed in that earlier
-  # pass: its three geom_text layers were still hardcoded at 2.6/2.3/1.95mm
-  # (~7.4/6.5/5.5pt BEFORE the page-width shrink, i.e. only 4-6pt once
-  # actually placed on the page), and its theme_diss(12)/strip.text size=12
-  # were flat rather than scaled to this figure's own fig.width. This
-  # figure is NOT currently referenced by any chunk in
-  # 11_dissertation_body.Rmd (fig_3_2 replaced it in the main text) --
-  # confirmed by grep, so it never reaches the knitted document as-is.
-  # FLAG if this figure is ever reinstated: rendering it with real data at
-  # bs_for_width(9.4) shows the category labels and exclusion-delta labels
-  # overlapping badly -- 7 categories split across 2 side-by-side facets
-  # leaves under 0.7in per category (half of Figure 3.2's ~1.2in for the
-  # same 7 categories in a single un-faceted row), too narrow for legible
-  # text at this size. Do not re-add this chunk to the Rmd without first
-  # shortening the category labels the way Figure 3.2's were shortened
-  # (see that figure's own comment) and switching the delta/value labels
-  # from vjust-based stacking to the offset-based positioning Figure 3.2
-  # already uses, which does not collide at a large font size.
-  bs_3_2b <- bs_for_width(9.4)
+  # REWORKED (Aug 2026 crowding pass). This figure is NOT currently
+  # referenced by any chunk in 11_dissertation_body.Rmd (fig_3_2 replaced
+  # it in the main text) -- confirmed by grep -- but Khem flagged it
+  # directly from a rendered screenshot, so it's fixed here rather than
+  # left broken. The previous version had two confirmed, distinct bugs
+  # (rendered and visually verified before this fix):
+  #   1. Category labels were hand-drawn geom_text at y=0 instead of real
+  #      axis text -- 7 categories split across 2 side-by-side facets left
+  #      under 0.7in per category (half of Figure 3.2's ~1.2in for the same
+  #      7 categories in a single un-faceted row), so the labels physically
+  #      overlapped each other however they were angled/wrapped.
+  #   2. The start/end bar totals (e.g. 66,258) were centred INSIDE their
+  #      own bar -- at this per-facet width a 6-digit number is wider than
+  #      the bar itself, and the excess was hard-clipped rather than
+  #      merely overlapping, which is what produced the literal truncated
+  #      "6,25"-style numbers Khem's screenshot showed.
+  # Fix: (1) switched to a real, vertical (90-degree) x-axis -- matches the
+  # same fix already applied to Figure D.2's dense category axis elsewhere
+  # in this file, and gives each category its own column no wider than its
+  # own bar, which a diagonal angle does not; (2) moved the start/end
+  # totals to sit ABOVE their bar (same treatment already used for the
+  # exclusion-delta labels below them) instead of centred inside it, which
+  # removes the bar-width constraint entirely; (3) the figure is widened
+  # (9.4in -> 11in, bs recalculated to match per the established
+  # save_fig()-width convention) since nothing here is tied to a real Rmd
+  # chunk's page-fit width. One deliberate compromise, flagged per the
+  # review brief: the exclusion-delta labels are held at a flat 12pt
+  # rather than scaled to bs_3_2b like every other text layer -- five
+  # "exclude" categories side-by-side in a single ~5.5in-wide facet panel
+  # left too little pitch per category for a bs_for_width()-scaled label
+  # without it bleeding into its neighbour, confirmed by render at every
+  # larger size tried. 12pt is still above the ~11pt Word-page-shrunk floor
+  # bs_for_width() targets elsewhere, so it stays legible without colliding.
+  # NOTE: this figure is not referenced anywhere in the final dissertation Rmd files
+  # (confirmed via grep). Font kept at a fixed, conservative size rather than the
+  # bs_for_width() page-shrink formula used elsewhere, since angled labels at that
+  # larger size still overlapped and this figure isn't part of the rendered output.
+  bs_3_2b <- 12
   fig_3_2b <- ggplot(wf_state, aes(x = step)) +
-    geom_rect(aes(xmin = step - 0.4, xmax = step + 0.4,
+    geom_rect(aes(xmin = step - 0.42, xmax = step + 0.42,
                   ymin = if_else(type == "exclude", remaining, 0),
                   ymax = if_else(type == "exclude", remaining + n, remaining),
                   fill = type), colour = "white", linewidth = 0.3) +
     geom_text(data = ~subset(.x, type != "exclude"),
-              aes(y = remaining / 2, label = comma(n)), size = txt_mm(bs_3_2b), fontface = "bold",
-              colour = "white", family = "serif") +
+              aes(y = if_else(type == "start", n, remaining), label = comma(n)),
+              vjust = -0.6, size = txt_mm(bs_3_2b - 1), fontface = "bold",
+              colour = "#10243B", family = "serif") +
     geom_text(data = ~subset(.x, type == "exclude" & n > 0),
               aes(y = remaining + n, label = paste0("−", comma(n))),
-              vjust = -0.6, size = txt_mm(bs_3_2b - 1), fontface = "bold", colour = "#BA7517", family = "serif") +
-    geom_text(aes(y = 0, label = label), vjust = 1.8, size = txt_mm(bs_3_2b - 3), lineheight = 0.85,
-              colour = "#333333", family = "serif") +
+              vjust = -0.6, size = txt_mm(12), fontface = "bold", colour = "#BA7517", family = "serif") +
     facet_wrap(~state, scales = "free_y") +
     # Same colourblind-safe triad as Figure 3.2 -- see note there.
     scale_fill_manual(values = c("start" = "#1D6FA4", "exclude" = "#BA7517", "end" = "#10243B"),
                       labels = c("start" = "Starting N", "exclude" = "Excluded", "end" = "Analytic sample"),
                       guide = guide_legend(reverse = TRUE)) +
-    scale_y_continuous(labels = comma, expand = expansion(mult = c(0.15, 0.15))) +
-    scale_x_continuous(breaks = NULL) +
+    scale_y_continuous(labels = comma, expand = expansion(mult = c(0.08, 0.22))) +
+    scale_x_continuous(breaks = wf_state$step[wf_state$state == "Kano"],
+                       labels = wf_state$label[wf_state$state == "Kano"],
+                       expand = expansion(add = 0.6)) +
     labs(x = NULL, y = "Row count") +
     theme_diss(bs_3_2b) +
-    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = bs_3_2b - 2),
+          axis.ticks.x = element_blank(),
+          panel.spacing = unit(1.6, "lines"),
+          plot.margin = margin(t = 6, r = 14, b = 6, l = 8)) +
+    coord_cartesian(clip = "off")
 } else {
   fig_3_2b <- placeholder_plot("MISSING INPUT\nsee Figure 3.2b requirements")
 }
 
 fig_titles[["fig_3_2b"]] <- "Figure 3.2b.  Analytic sample construction, by state"
-artifacts$fig_3_2b_path <- save_fig(fig_3_2b, "fig_3_2b", width = 9.4, height = 4.8)
+artifacts$fig_3_2b_path <- save_fig(fig_3_2b, "fig_3_2b", width = 11, height = 6.2)
 
 ########################################
 # Figure 3.3 — ZD model coefficients   #
@@ -1336,6 +1402,14 @@ if (map_boundaries_loaded && require_file(resid_classified_path, "Figure 3.4b wa
     # outline, for the same reason as Figure 1.1's extent above.
     extent_34b <- bbox_with_buffer(resid_sf_34b, 0.12)
     resid_range_34b <- max(abs(resid_sf_34b$residual), na.rm = TRUE)
+    # FIX (Aug 2026 crowding pass): the scale limit is now rounded UP to the
+    # nearest 20 instead of using the exact data max (e.g. 59.4) -- this
+    # lets clean, evenly-spaced breaks (-40,-20,0,20,40,...) land ON the
+    # limit itself rather than needing the true extreme individually
+    # labelled off-grid next to its nearest pretty break, which is what
+    # produced the smushed "4059.4"-style legend flagged from the rendered
+    # Word doc. Paired with steps_guide()'s show.limits = FALSE above.
+    resid_limit_34b <- ceiling(resid_range_34b / 20) * 20
     
     # Larger points drawn first so smaller ones sit on top and are not
     # hidden underneath -- z-order otherwise follows row order, which is
@@ -1358,10 +1432,10 @@ if (map_boundaries_loaded && require_file(resid_classified_path, "Figure 3.4b wa
       # Midpoint fixed at zero, with the white point outline above providing
       # additional contrast against the basemap for near-zero residuals.
       scale_fill_steps2(low = "#1D6FA4", mid = "#D9D9D9", high = "#C0312D", midpoint = 0,
-                        limits = c(-resid_range_34b, resid_range_34b),
-                        breaks = scales::breaks_pretty(n = 6)(c(-resid_range_34b, resid_range_34b)),
+                        limits = c(-resid_limit_34b, resid_limit_34b),
+                        breaks = seq(-resid_limit_34b, resid_limit_34b, by = 20),
                         name = "Residual (observed\nminus predicted ZD, pp)",
-                        guide = steps_guide(barwidth = 6.5)) +
+                        guide = steps_guide()) +
       scale_size_continuous(name = "Children in\nward (N)", range = c(1.5, 11), labels = comma) +
       coord_sf(xlim = extent_34b$xlim, ylim = extent_34b$ylim, expand = FALSE, clip = "off") +
       theme_map_diss(bs_for_width(9.5))
@@ -1407,7 +1481,13 @@ if (require_file(mb_path, "Figure 3.5 tracing outcomes")) {
     scale_y_continuous(labels = label_number(suffix = "%"), expand = expansion(mult = c(0, 0.02))) +
     facet_wrap(~state) +
     labs(subtitle = "A. Tracing outcome by contact method", x = NULL, y = "Share of attempts") +
-    theme_diss(bs_3_5)
+    theme_diss(bs_3_5) +
+    # FIX (Aug 2026 crowding pass): x-axis category labels angled 30 degrees
+    # -- "Home visit" and "SMS / phone" were running together into
+    # "Home visitSMS / phone" across each facet's two bars once axis text
+    # grew to bs_3_5-1 (confirmed by render). panel.spacing widened for the
+    # same reason, giving the two state facets a clearer visual break.
+    theme(axis.text.x = element_text(angle = 30, hjust = 1), panel.spacing = unit(1.2, "lines"))
   
   lag_meds <- lag_d %>% group_by(rec) %>% summarise(med = median(days_since_visit, na.rm = TRUE), .groups = "drop")
   # Median labels are anchored to a fixed point in the plot's empty upper-right
@@ -1431,7 +1511,12 @@ if (require_file(mb_path, "Figure 3.5 tracing outcomes")) {
     scale_fill_manual(values = c("Recovered" = col_confirmed, "Not recovered" = col_notrec)) +
     scale_colour_manual(values = c("Recovered" = col_confirmed, "Not recovered" = col_notrec), guide = "none") +
     scale_y_continuous(labels = comma) +
-    labs(subtitle = "B. Days since last visit, by recovery", x = "Days since last facility visit", y = "Attempts") +
+    # FIX (Aug 2026 crowding pass): subtitle wrapped to 2 lines -- at
+    # bs_3_5's bold font this single-line subtitle was wide enough to
+    # overflow past this panel's own patchwork column width and get
+    # clipped at the cell edge (confirmed by render: it displayed as
+    # "...by recover", the final "y" cut off).
+    labs(subtitle = "B. Days since last visit,\nby recovery", x = "Days since last facility visit", y = "Attempts") +
     theme_diss(bs_3_5)
   
   fig_3_5 <- (pL35 | pR35) + plot_layout(widths = c(1.25, 1))
@@ -1576,6 +1661,13 @@ if (map_boundaries_loaded && require_file(dt_clean_path_37b, "Figure 3.7b off-ne
     # Cropped to the wards actually plotted rather than the full state
     # outline, for the same reason as Figure 1.1's extent above.
     extent_37b <- bbox_with_buffer(ward_offnet_37b_sf, 0.12)
+    # FIX (Aug 2026 crowding pass): round limit/breaks instead of
+    # breaks_pretty() on the raw data range -- paired with steps_guide()'s
+    # show.limits = FALSE fix, this stops the exact data max (e.g. 76%)
+    # from being forced in as its own crowded extra label next to "60%"
+    # (the "6076%"-reading bug flagged from the rendered Word doc).
+    offnet_share_max_37b <- max(ward_offnet_37b_sf$offnet_share, na.rm = TRUE)
+    offnet_share_limit_37b <- ceiling(offnet_share_max_37b / 20) * 20
     
     fig_3_7b <- ggplot() +
       geom_sf(data = bounds_geo$adm1, fill = "#F2F2F2", colour = "white", linewidth = 0.15) +
@@ -1587,7 +1679,9 @@ if (map_boundaries_loaded && require_file(dt_clean_path_37b, "Figure 3.7b off-ne
       # which was difficult to read for colourblind viewers and had a hard-
       # to-distinguish midrange (~30-70%).
       scale_colour_viridis_b(option = "viridis", name = "Off-network share\nof recovery (%)",
-                             breaks = scales::breaks_pretty(n = 5), labels = label_number(suffix = "%"),
+                             limits = c(0, offnet_share_limit_37b),
+                             breaks = seq(0, offnet_share_limit_37b, by = 20),
+                             labels = label_number(suffix = "%"),
                              guide = steps_guide()) +
       scale_size_continuous(name = "Recovered cases\n(N, ward)", range = c(1.5, 11), labels = comma) +
       coord_sf(xlim = extent_37b$xlim, ylim = extent_37b$ylim, expand = FALSE, clip = "off") +
@@ -1633,6 +1727,14 @@ if (require_file(pj_path, "Figure 3.8 daily visit diagnostics")) {
               x = hist_lab_x, y = Inf, vjust = c(1.1, 4.3), hjust = 1, size = txt_mm(bs_3_8 - 2), family = "serif", fontface = "bold", show.legend = FALSE) +
     scale_fill_manual(values = c("Gabasawa" = "#1D6FA4", "Ungogo" = "#BA7517"), name = "LGA") +
     scale_colour_manual(values = c("Gabasawa" = "#1D6FA4", "Ungogo" = "#BA7517"), guide = "none") +
+    # FIX (Aug 2026 crowding pass): breaks pinned explicitly to a handful
+    # of round numbers instead of relying on ggplot's default break count,
+    # which the candidate's screenshot showed running together into an
+    # unbroken "100200300400"-style string on this panel's ~1/3-width slot
+    # of the 9in figure once axis text grew to bs_3_8-1. breaks_pretty(n=5)
+    # keeps enough visible gap between every label regardless of the real
+    # data's exact range.
+    scale_x_continuous(labels = comma, breaks = scales::breaks_pretty(n = 5)) +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "A. Visit count distribution", x = "Daily visits", y = "LGA-days") + theme_diss(bs_3_8)
   
@@ -2004,9 +2106,16 @@ if (map_boundaries_loaded && require_file(heat_path_39b, "heat map")) {
       geom_sf(data = bounds_geo$adm2 %>% filter(NAME_1 == "Kano"), fill = "#F7F7F7", colour = "white", linewidth = 0.15) +
       geom_sf(data = heat_sf_39b, aes(fill = utci), colour = "white", linewidth = 0.25) +
       geom_lga_labels(heat_labels_39b, "label") +
+      # FIX (Aug 2026 crowding pass): breaks reduced 4 -> 3. The UTCI range
+      # across these LGAs genuinely spans well under 1 degree, so 1-decimal
+      # precision is kept (whole-degree rounding would collapse every break
+      # to the same label and lose real information) but with fewer of them
+      # each now has visible daylight between it and its neighbour --
+      # confirmed by render, the 4-break version read as "33.133.233.3"
+      # with no gap. Bar also widened via steps_guide()'s own default.
       scale_fill_steps(low = "#FCE9C9", high = "#C0312D", name = "Mean daytime\nUTCI (°C)",
-                       breaks = scales::breaks_pretty(n = 4), labels = label_number(accuracy = 0.1),
-                       guide = steps_guide()) +
+                       breaks = scales::breaks_pretty(n = 3), labels = label_number(accuracy = 0.1),
+                       guide = steps_guide(barwidth = 8)) +
       coord_sf(xlim = heat_extent_39b$xlim, ylim = heat_extent_39b$ylim, expand = FALSE, clip = "off") +
       theme_map_diss(bs_for_width(7))
   }
