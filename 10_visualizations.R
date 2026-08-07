@@ -1,7 +1,7 @@
 ########################################
 #  10_visualizations.R                 #
 #  Created: 13/7/2026                  #
-#  Updated: 30/7/2026                  #
+#  Updated: 07/8/2026                  #
 ########################################
 
 # Reset environment -----------------------------------------------------
@@ -116,6 +116,30 @@ ci_cell <- function(coef, se) {
          "<br><small style='color:#777;font-style:normal'>[", lo, ", ", hi, "]</small>")
 }
 
+# Odds-ratio version of ci_cell(), for the two logistic (feglm, family =
+# binomial) tables only -- Table 3.1a (zero-dose model) and Table 3.1b
+# (recovery model). Per Aisha's review: the prose already describes these
+# coefficients as percentage changes in odds ("roughly 4 per cent per
+# additional kilometre", "an 87 per cent increase", etc.), so the table
+# should report OR = exp(beta) with the CI also transformed via exp()
+# (exp(lower_CI_logodds) to exp(upper_CI_logodds)) instead of making the
+# reader mentally exponentiate a log-odds coefficient. Significance stars
+# are still computed from the log-odds coef/se, exactly as in ci_cell() --
+# the Wald z-statistic is invariant under this monotonic transform, so
+# which stars appear does not change when the point estimate is reported
+# as an OR instead of a beta. Do NOT use this for the weather / OLS
+# tables (tab_weather, Table 3.2, 3.3) -- those are negative-binomial /
+# OLS models where a "percentage change in odds" reading does not apply.
+or_cell <- function(coef, se) {
+  if (is.na(coef) || is.na(se)) return("NA — check upstream file")
+  st <- star2(coef, se)
+  lo_logodds <- coef - 1.96 * se; hi_logodds <- coef + 1.96 * se
+  or    <- exp(coef)
+  or_lo <- round(exp(lo_logodds), 3); or_hi <- round(exp(hi_logodds), 3)
+  paste0(formatC(or, format = "f", digits = 3), st,
+         "<br><small style='color:#777;font-style:normal'>[", or_lo, ", ", or_hi, "]</small>")
+}
+
 # File-existence gate — warns loudly and returns FALSE instead of silently
 # falling back to an old hardcoded number. This is the whole point of the
 # rewrite: a missing upstream file should be visibly broken, not quietly
@@ -167,7 +191,14 @@ theme_diss <- function(bs = 12) {
     plot.title = element_text(face = "bold", size = bs, hjust = 0, margin = margin(b = 4)),
     plot.subtitle = element_text(size = bs - 1, colour = "#4d4d4d", hjust = 0, margin = margin(b = 10)),
     plot.caption = element_text(size = 10, colour = "#595959", hjust = 0, margin = margin(t = 8), lineheight = 1.15),
-    axis.title = element_text(size = bs - 1), axis.text = element_text(size = bs - 1, colour = "#333"),
+    axis.title = element_text(size = bs - 1), axis.text = element_text(size = bs - 1, colour = "#333333"),
+    # theme_minimal()'s own default is strip.text = element_text(size =
+    # rel(0.8)) -- fine at a flat bs=12, but once bs is raised via
+    # bs_for_width() for a wide figure, 0.8x of the new bs still shrinks
+    # facet labels (e.g. "Kano"/"Katsina") below the page-width-corrected
+    # floor every other element here is being held to. Set explicitly so
+    # facet strips scale with everything else instead of trailing behind it.
+    strip.text = element_text(size = bs - 1, face = "bold", colour = "#333333"),
     panel.grid.major.y = element_blank(),
     panel.grid.major.x = element_line(colour = "#e5e5e5", linewidth = 0.4),
     panel.grid.minor = element_blank(), legend.position = "top", legend.title = element_blank())
@@ -185,6 +216,37 @@ theme_datharm <- function(bs = 12.5) {
     plot.title = element_text(face = "bold", size = bs + 0.5),
     plot.subtitle = element_text(color = "#4d4d4d", size = bs - 1))
 }
+
+# --- Legibility-at-page-width fix (Aug 2026) --------------------------------
+# Every figure below is drawn at a wide canvas (fig.width in
+# 11_dissertation_body.Rmd ranges from ~7in to 11in) but Word's printable
+# page content is narrower. Checked directly against 11_word_reference.docx
+# (word/document.xml): <w:pgSz w:w="11906".../> (A4, 11906 twips = 8.27in)
+# and <w:pgMar w:left="1417" w:right="1417".../> (1417 twips = 2.5cm each
+# side) -> usable content width = (11906 - 2*1417) / 1440 = 6.3in. knitr
+# shrinks the whole raster image to fit that width, so EVERY font in the
+# figure shrinks by the same factor -- scale = 6.3 / fig.width. A
+# theme_diss(12) axis label on a 9.5in-wide figure lands on the page at
+# 12 * 6.3/9.5 = 7.96pt, well under the ~11-12pt body text it sits next to.
+# bs_for_width() below is the target base_size that keeps the SMALLEST
+# theme element (axis text, bs-1) at or a little above 12pt once shrunk:
+# bs_for_width(w) = ceiling(12 * w / 6.3). Each figure's theme_diss()/
+# theme_datharm()/theme_map_diss() call is now parameterised with
+# bs_for_width(<that figure's real fig.width>) instead of a flat 11/12,
+# using the fig.width actually declared for it in 11_dissertation_body.Rmd
+# (aligned 1:1 with each save_fig() call below so the two can never again
+# drift into a distorting aspect-ratio mismatch).
+bs_for_width <- function(fig_width_in, page_width_in = 6.3) {
+  ceiling(12 * fig_width_in / page_width_in)
+}
+
+# In-plot text set via geom_text()/annotate()/geom_label() is sized in mm,
+# not pt, and lives OUTSIDE theme() so raising a figure's base_size alone
+# does not touch it. txt_mm() converts a target POINT size (chosen relative
+# to that figure's new base_size, so data labels keep the same visual
+# hierarchy against axis text they had before) into the mm value these
+# geoms expect, using the standard 72.27 big-points-per-inch text convention.
+txt_mm <- function(pt) pt / (72.27 / 25.4)
 
 #----------------------------------------------------------------------------
 
@@ -283,24 +345,41 @@ theme_map_diss <- function(base_size = 12) {
     theme(
       plot.title      = element_text(face = "bold", size = base_size + 2, hjust = 0.5, margin = margin(b = 8)),
       plot.caption    = element_text(size = base_size - 2.5, colour = "#595959", hjust = 0, margin = margin(t = 10), lineheight = 1.15),
-      legend.position = "bottom", legend.box = "horizontal",
+      # legend.box switched from "horizontal" to "vertical" (Aug 2026): at
+      # the larger legend text bs_for_width() now requires on these 9.5in
+      # maps, the two legends (point size + colour/state) side by side no
+      # longer fit the panel width and were clipping off both edges of the
+      # page -- confirmed by rendering fig_1_1 at bs=18, where "Enrolled
+      # children" and "Katsina" were both cut off. Stacking them (one row
+      # each, both still centred and internally horizontal) keeps every
+      # legend entry on-page regardless of base_size.
+      legend.position = "bottom", legend.box = "vertical", legend.box.just = "center",
       legend.title    = element_text(size = base_size + 0.5, face = "bold"),
       legend.text     = element_text(size = base_size),
-      legend.key.size = unit(1.3, "lines"), legend.spacing.x = unit(0.6, "cm"),
-      plot.margin     = margin(t = 10, r = 18, b = 8, l = 18)
+      legend.key.size = unit(1.3, "lines"), legend.spacing.x = unit(0.4, "cm"),
+      legend.spacing.y = unit(0.15, "cm"),
+      # Tightened from t=10,r=18,b=8,l=18 -- theme_void() maps have no axis
+      # text eating into this margin, so the wide left/right padding was
+      # just dead space once the legend/labels below were enlarged.
+      plot.margin     = margin(t = 6, r = 10, b = 6, l = 10)
     )
 }
 
-geom_lga_labels <- function(label_df, label_col = "label", seed = 2026) {
+geom_lga_labels <- function(label_df, label_col = "label", seed = 2026, size_pt = 14) {
   geom_col_name <- attr(label_df, "sf_column")
   list(ggrepel::geom_label_repel(
-    # size = 3.6 (~10pt) per Lucy's comment that map labels were unreadable
-    # without zooming; was 3.1 (~8.8pt).
+    # size_pt default raised from a flat ~10pt to 14pt (28/7/2026 fix was
+    # 3.6mm ~10pt; Aug 2026 page-width fix: every map here is placed at
+    # 9.5in or 7.0in fig.width, both of which shrink by more than the flat
+    # 10pt allowed for once fit to Word's ~6.5in page -- see bs_for_width()
+    # note above theme_datharm(). Callers on the 9.5in maps (fig_1_1,
+    # fig_3_4b, fig_3_7b) use the default; the 7.0in weather maps pass a
+    # smaller size_pt since they need less compensation.
     data = label_df, mapping = aes(label = .data[[label_col]], geometry = .data[[geom_col_name]]),
-    stat = "sf_coordinates", inherit.aes = FALSE, seed = seed, size = 3.6, family = "serif",
-    fontface = "bold", colour = "#222", fill = alpha("white", 0.85), label.size = 0,
-    label.padding = unit(0.18, "lines"), box.padding = unit(0.7, "lines"), point.padding = unit(0.3, "lines"),
-    min.segment.length = 0.15, segment.colour = "#888", segment.size = 0.3, max.overlaps = 20
+    stat = "sf_coordinates", inherit.aes = FALSE, seed = seed, size = txt_mm(size_pt), family = "serif",
+    fontface = "bold", colour = "#222222", fill = alpha("white", 0.85), label.size = 0,
+    label.padding = unit(0.2, "lines"), box.padding = unit(0.8, "lines"), point.padding = unit(0.3, "lines"),
+    min.segment.length = 0.15, segment.colour = "#888888", segment.size = 0.3, max.overlaps = 20
   ))
 }
 
@@ -379,9 +458,13 @@ a2_age_raw  <- extract_coef_se(ma_parsed, "Age at registration", col = 2)
 a1_sex_raw  <- extract_coef_se(ma_parsed, "^Female", col = 1)
 a2_sex_raw  <- extract_coef_se(ma_parsed, "^Female", col = 2)
 
-a1_dist <- ci_cell(a1_dist_raw$coef, a1_dist_raw$se); a2_dist <- ci_cell(a2_dist_raw$coef, a2_dist_raw$se)
-a1_age  <- ci_cell(a1_age_raw$coef,  a1_age_raw$se);  a2_age  <- ci_cell(a2_age_raw$coef,  a2_age_raw$se)
-a1_sex  <- ci_cell(a1_sex_raw$coef,  a1_sex_raw$se);  a2_sex  <- ci_cell(a2_sex_raw$coef,  a2_sex_raw$se)
+# Table 3.1a reports odds ratios, not log-odds coefficients (Aisha's review:
+# the prose already talks in percentage-change-in-odds terms, so the table
+# should match rather than making the reader exponentiate a beta by hand).
+# star2() is still driven by the underlying log-odds coef/se -- see or_cell().
+a1_dist <- or_cell(a1_dist_raw$coef, a1_dist_raw$se); a2_dist <- or_cell(a2_dist_raw$coef, a2_dist_raw$se)
+a1_age  <- or_cell(a1_age_raw$coef,  a1_age_raw$se);  a2_age  <- or_cell(a2_age_raw$coef,  a2_age_raw$se)
+a1_sex  <- or_cell(a1_sex_raw$coef,  a1_sex_raw$se);  a2_sex  <- or_cell(a2_sex_raw$coef,  a2_sex_raw$se)
 
 a_n  <- fb(ev(ma_parsed, "Num.Obs", 1), "NA — check 01_model_a_zerodose_predictors.txt")
 a_r2 <- fb(ev(ma_parsed, "R2", 1), "NA")
@@ -496,14 +579,17 @@ if (map_boundaries_loaded && require_file(ll_path_map, "Figure 1.1 footprint map
       scale_size_continuous(name = "Enrolled children", range = c(1.5, 13), labels = comma) +
       coord_sf(xlim = extent_11$xlim, ylim = extent_11$ylim, expand = FALSE, clip = "off") +
       guides(colour = guide_legend(override.aes = list(size = 5))) +
-      theme_map_diss(12)
+      theme_map_diss(bs_for_width(9.5))
   }
 } else {
   fig_1_1 <- placeholder_plot("MISSING INPUT\n01_linelisted_clean.rds, or GADM boundaries unavailable")
 }
 
 fig_titles[["fig_1_1"]] <- "Figure 1.1.  MCHTrack's ward-level footprint across Kano and Katsina"
-artifacts$fig_1_1_path <- save_fig(fig_1_1, "fig_1_1", width = 9.5, height = 8.2, dpi = 150)
+# height matched to the fig-1-1 Rmd chunk's fig.height=7.4 (was 8.2, a
+# leftover mismatch that stretched/squashed the raster once knitr resized
+# it to the chunk's declared box -- see bs_for_width() note above).
+artifacts$fig_1_1_path <- save_fig(fig_1_1, "fig_1_1", width = 9.5, height = 7.4, dpi = 150)
 
 #----------------------------------------------------------------------------
 
@@ -518,30 +604,36 @@ boxes <- tibble(
   dataset = c("linelisted", "identifiedZD", "facility_visits", "defaulterTracing"),
   x       = c(1, 3, 5, 7))
 
+# Illustrative schematic, no theme_diss() -- text sizes below were
+# originally hand-tuned for a 12pt-equivalent read. bs_2_1 is the
+# bs_for_width() target for this figure's real fig.width (8.6in, Rmd
+# fig-2-1), and every geom_text/annotate size is scaled by bs_2_1/12 to
+# match (txt_mm() converts the resulting pt size to the mm geom_text wants).
+bs_2_1 <- bs_for_width(8.6)
 fig_2_1 <- ggplot() +
   annotate("rect", xmin = 0.45, xmax = 7.75, ymin = -0.55, ymax = 0.55,
            fill = "#EAF2FB", colour = "#1D6FA4", linewidth = 0.4, linetype = "dashed") +
   annotate("text", x = 7.68, y = 0.47, label = "MCHTrack system boundary",
-           hjust = 1, size = 3.4, colour = "#1D6FA4", fontface = "italic", family = "serif") +
+           hjust = 1, size = txt_mm(9.5 * bs_2_1 / 12), colour = "#1D6FA4", fontface = "italic", family = "serif") +
   geom_rect(data = boxes, aes(xmin = x - 0.5, xmax = x + 0.5, ymin = -0.32, ymax = 0.32),
-            fill = "white", colour = "#333", linewidth = 0.6) +
+            fill = "white", colour = "#333333", linewidth = 0.6) +
   geom_text(data = boxes, aes(x = x, y = 0.1, label = label),
-            size = 3.6, fontface = "bold", lineheight = 0.9, family = "serif") +
+            size = txt_mm(10 * bs_2_1 / 12), fontface = "bold", lineheight = 0.9, family = "serif") +
   geom_text(data = boxes, aes(x = x, y = -0.18, label = dataset),
-            size = 3.0, colour = "#555", fontface = "italic", family = "serif") +
+            size = txt_mm(8.4 * bs_2_1 / 12), colour = "#555555", fontface = "italic", family = "serif") +
   annotate("segment", x = c(1.55, 3.55, 5.55), xend = c(2.45, 4.45, 6.45), y = 0, yend = 0,
-           arrow = arrow(length = unit(0.14, "cm"), type = "closed"), colour = "#333", linewidth = 0.5) +
+           arrow = arrow(length = unit(0.14, "cm"), type = "closed"), colour = "#333333", linewidth = 0.5) +
   annotate("text", x = 1, y = -0.72, label = "~1 in 5 households\nnot reached in enumeration",
-           size = 3.0, colour = "#C0312D", fontface = "italic", family = "serif") +
+           size = txt_mm(8.4 * bs_2_1 / 12), colour = "#C0312D", fontface = "italic", family = "serif") +
   annotate("segment", x = 1, xend = 1, y = -0.32, yend = -0.5, colour = "#C0312D", linewidth = 0.4,
            arrow = arrow(length = unit(0.1, "cm"), type = "closed")) +
   annotate("text", x = 7, y = -0.75, label = "Off-network care recorded\nverbally, cannot be verified",
-           size = 3.0, colour = "#BA7517", fontface = "italic", family = "serif") +
+           size = txt_mm(8.4 * bs_2_1 / 12), colour = "#BA7517", fontface = "italic", family = "serif") +
   annotate("segment", x = 7, xend = 7, y = -0.32, yend = -0.5, colour = "#BA7517", linewidth = 0.4,
            linetype = "dotted", arrow = arrow(length = unit(0.1, "cm"), type = "closed")) +
   scale_x_continuous(limits = c(0.4, 8.0)) + scale_y_continuous(limits = c(-0.95, 0.62)) +
   theme_void() +
-  theme(plot.title = element_text(family = "serif", face = "bold", size = 12, margin = margin(b = 6, l = 2)))
+  theme(plot.title = element_text(family = "serif", face = "bold", size = bs_2_1, margin = margin(b = 6, l = 2)))
 
 fig_titles[["fig_2_1"]] <- "Figure 2.1.  MCHTrack data pipeline and its structural blind spots"
 artifacts$fig_2_1_path <- save_fig(fig_2_1, "fig_2_1", width = 8.6, height = 4.2)
@@ -588,14 +680,16 @@ if (require_file(dedup_dist_path, "Figure 2.2 duplicate set-size distribution"))
     scale_y_continuous(labels = comma) +
     labs(x = "Number of times a record appears (duplicate set size)",
          y = "Distinct records affected", fill = NULL) +
-    theme_diss(11) +
+    theme_diss(bs_for_width(8)) +
     theme(panel.grid.major.x = element_blank())
 } else {
   fig_2_2 <- placeholder_plot("MISSING INPUT\n09_dedup_set_size_distribution.rds\n(run 09_data_investigations.R)")
 }
 
 fig_titles[["fig_2_2"]] <- "Figure 2.2.  Duplicate record set sizes by state and MCHTrack table"
-artifacts$fig_2_2_path <- save_fig(fig_2_2, "fig_2_2", width = 9, height = 3.8)
+# width matched to the fig-2-2 Rmd chunk's fig.width=8 (was 9 -- see
+# bs_for_width() note above theme_datharm()).
+artifacts$fig_2_2_path <- save_fig(fig_2_2, "fig_2_2", width = 8, height = 3.8)
 
 ########################################
 # Figure 2.2b — Data reliability by    #
@@ -625,20 +719,29 @@ if (require_file(lga_panel_path, "Figure 2.2b data reliability by state")) {
     geom_vline(xintercept = katsina_cutoff, linetype = "dashed", colour = "#C0312D", linewidth = 0.4) +
     annotate("text", x = katsina_cutoff, y = max(reliability_monthly$imm_visits, na.rm = TRUE),
              label = "Katsina excluded from weather\nmodel beyond this point", hjust = -0.05, vjust = 1,
-             size = 3.4, colour = "#C0312D", fontface = "italic", family = "serif") +
+             size = txt_mm(9.5 * bs_for_width(8.5) / 11), colour = "#C0312D", fontface = "italic", family = "serif") +
     geom_line(linewidth = 0.7) +
     geom_point(size = 1.3) +
     scale_colour_manual(values = pal_state) +
-    scale_x_date(date_breaks = "3 months", date_labels = "%b %Y") +
+    # date_breaks widened 3->6 months and labels angled 40 degrees (Aug
+    # 2026): confirmed by render that at the legible bs_for_width(8.5)
+    # font, ~12 horizontal "%b %Y" labels (3-month spacing across a 3-year
+    # span) ran into each other along this 8.5in-wide x-axis. 6-month
+    # spacing plus angling (matching Figure 3.8's existing convention)
+    # gives each label its own clear footprint.
+    scale_x_date(date_breaks = "6 months", date_labels = "%b %Y") +
     scale_y_continuous(labels = comma) +
     labs(x = NULL, y = "Immunisation visits", colour = NULL) +
-    theme_diss(11)
+    theme_diss(bs_for_width(8.5)) +
+    theme(axis.text.x = element_text(angle = 40, hjust = 1))
 } else {
   fig_2_2b <- placeholder_plot("MISSING INPUT\n01_panel_lga_month.rds\n(run 01_mchtrack_import.R)")
 }
 
 fig_titles[["fig_2_2b"]] <- "Figure 2.2b.  Data reliability by state — monthly immunisation visit volume"
-artifacts$fig_2_2b_path <- save_fig(fig_2_2b, "fig_2_2b", width = 9, height = 4.2)
+# width/height matched to the fig-2-2b Rmd chunk (fig.width=8.5,
+# fig.height=3.6; was 9x4.2 -- see bs_for_width() note above theme_datharm()).
+artifacts$fig_2_2b_path <- save_fig(fig_2_2b, "fig_2_2b", width = 8.5, height = 3.6)
 
 ########################################
 # Figure 2.3 — Overdispersion          #
@@ -655,12 +758,12 @@ if (require_file(vm_path, "Figure 2.3 overdispersion")) {
   fig_2_3 <- ggplot(vm_long, aes(x = lga_clean, y = value, fill = stat)) +
     geom_col(position = position_dodge(0.6), width = 0.5, alpha = 0.9) +
     geom_text(data = vm, aes(x = lga_clean, y = Variance, label = paste0("V/M = ", ratio)),
-              inherit.aes = FALSE, vjust = -0.5, size = 3.4, fontface = "bold",
-              colour = "#333", family = "serif") +
+              inherit.aes = FALSE, vjust = -0.5, size = txt_mm(9.5 * bs_for_width(7.5) / 11), fontface = "bold",
+              colour = "#333333", family = "serif") +
     scale_fill_manual(values = c("Mean" = "#1D6FA4", "Variance" = "#C0312D")) +
     scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.12))) +
     labs(x = NULL, y = "Daily visits") +
-    theme_diss(11)
+    theme_diss(bs_for_width(7.5))
 } else {
   fig_2_3 <- placeholder_plot("MISSING INPUT\n06_panel_daily.rds")
 }
@@ -714,38 +817,62 @@ if (require_file(bl_path, "Figure 2.4 baseline distributions")) {
   # (guide_area(), 4th cell) instead of a legend repeated on every panel;
   # text sizes bumped to >=10pt; subtitles trimmed to bare A/B/C tags, all
   # other descriptive text moved to the Rmd caption.
+  # bs_2_4 uses fig.width=9 (not the Rmd's stale 11) -- see the fig.width/
+  # fig.height fix note by this figure's save_fig() call below.
+  bs_2_4 <- bs_for_width(9)
   p_age24 <- ggplot(bl %>% filter(age_months_at_reg <= 60), aes(x = age_months_at_reg, fill = state)) +
     geom_histogram(bins = 40, position = "identity", alpha = 0.6, colour = NA) +
     scale_fill_manual(values = pal_state) +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "A. Age at registration", x = "Age at registration (months)", y = "Children", fill = NULL) +
-    theme_diss(12)
+    theme_diss(bs_2_4)
   
+  # x-axis tick labels changed from "0.0 km"/"1.0 km"/... to bare numbers
+  # (Aug 2026): at bs_2_4's legible font size, the " km" suffix on every
+  # tick collided with the next tick's label on this panel's ~4.3in-wide
+  # quarter of the 9in figure (confirmed by render: "0.0 km1.0 km2.0 km..."
+  # ran together with no gap). The axis title "Distance (km)" already
+  # states the unit, so the suffix was redundant as well as the cause of
+  # the overlap.
   p_dist24 <- ggplot(bl %>% filter(hf_distance_km <= 5), aes(x = hf_distance_km, fill = state)) +
     geom_histogram(bins = 45, position = "identity", alpha = 0.6, colour = NA) +
     scale_fill_manual(values = pal_state) +
-    scale_x_continuous(labels = label_number(suffix = " km")) +
+    scale_x_continuous() +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "B. Distance to health facility", x = "Distance (km)", y = "Children", fill = NULL) +
-    theme_diss(12)
+    theme_diss(bs_2_4)
   
+  # x-axis date labels angled 40 degrees (Aug 2026, matching Figure 3.8's
+  # existing convention for the same problem): at bs_2_4, five horizontal
+  # "%b %Y" labels ("Jan 2023", "Jul 2023", ...) ran into each other on
+  # this panel's narrow quarter-width -- confirmed by render.
   p_time24 <- ggplot(bl, aes(x = registration_date, fill = state)) +
     geom_histogram(bins = 30, position = "identity", alpha = 0.6, colour = NA) +
     scale_fill_manual(values = pal_state) +
     scale_x_date(date_labels = "%b %Y") +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "C. Enrolment over time", x = NULL, y = "Children", fill = NULL) +
-    theme_diss(12)
+    theme_diss(bs_2_4) +
+    theme(axis.text.x = element_text(angle = 40, hjust = 1))
   
   fig_2_4 <- (p_age24 + p_dist24 + p_time24 + guide_area()) +
     plot_layout(ncol = 2, guides = "collect") +
     plot_annotation(
-      theme = theme(legend.position = "bottom", legend.text = element_text(family = "serif", size = 11)))
+      theme = theme(legend.position = "bottom",
+                    legend.text = element_text(family = "serif", size = 11 * bs_2_4 / 12)))
 } else {
   fig_2_4 <- placeholder_plot("MISSING INPUT\n03_model_a_dataset.rds")
 }
 
 fig_titles[["fig_2_4"]] <- "Figure 2.4.  Baseline characteristics by site — age, distance, and enrolment timing"
+# width/height already matched the fig-2-4 Rmd chunk's intended 2x2 layout
+# (see fig.width/fig.height fix there -- the chunk previously said
+# fig.width=11, fig.height=4.0, a leftover from the figure's original 1x3
+# layout per the 28/7/2026 comment above; the layout was changed to 2x2 but
+# the Rmd chunk was never updated, so the 2x2 grid was both being distorted
+# AND scored as this document's single highest legibility risk (11in-wide
+# canvas) for a reason that had nothing to do with font size. Rmd chunk
+# fixed to 9x7.5 to match what this script actually renders.
 artifacts$fig_2_4_path <- save_fig(fig_2_4, "fig_2_4", width = 9, height = 7.5)
 
 #----------------------------------------------------------------------------
@@ -759,30 +886,47 @@ if (require_file(ma_path, "Figure 3.1 predictor distributions")) {
   pm <- readRDS(ma_path) %>% filter(in_primary_sample)
   n_fig31 <- nrow(pm)
   
+  # REDESIGNED (Aug 2026): was three overlaid, alpha-blended fills (one per
+  # dose_group) on a single axis per panel. The candidate's own screenshot
+  # of the rendered Word doc showed exactly the failure mode this design
+  # invites -- near zero (where all three groups pile up and the
+  # comparison matters most), the overlapping translucent reds/ambers/
+  # blues blend into an indistinct muddy brown/grey, so the three groups
+  # cannot actually be told apart where it counts. Replaced with faceted
+  # small multiples: one facet per dose_group, each a single solid colour
+  # (no alpha, no blending possible), y-axis free per facet since the
+  # groups differ in size, x-axis shared within each panel (A: distance,
+  # B: age) so the shape comparison across groups is still meaningful.
+  # bs_3_1 = bs_for_width(8.4).
+  bs_3_1 <- bs_for_width(8.4)
   pdist <- ggplot(pm %>% filter(hf_distance_km <= 5), aes(x = hf_distance_km, fill = dose_group)) +
-    geom_histogram(bins = 45, position = "identity", alpha = 0.6, colour = NA) +
-    scale_fill_manual(values = pal_dose, name = "Recorded doses") +
-    scale_x_continuous(labels = label_number(suffix = " km")) +
+    geom_histogram(bins = 45, colour = NA) +
+    facet_wrap(~dose_group, ncol = 1, scales = "free_y") +
+    scale_fill_manual(values = pal_dose, guide = "none") +
+    scale_x_continuous() +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "A. Distance to health facility", x = "Distance (km)", y = "Children") +
-    theme_diss(12)
+    theme_diss(bs_3_1)
   page31 <- ggplot(pm %>% filter(age_months_at_reg <= 60), aes(x = age_months_at_reg, fill = dose_group)) +
-    geom_histogram(bins = 40, position = "identity", alpha = 0.6, colour = NA) +
-    scale_fill_manual(values = pal_dose, name = "Recorded doses") +
+    geom_histogram(bins = 40, colour = NA) +
+    facet_wrap(~dose_group, ncol = 1, scales = "free_y") +
+    scale_fill_manual(values = pal_dose, guide = "none") +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "B. Age at registration", x = "Age at registration (months)", y = NULL) +
-    theme_diss(12)
+    theme_diss(bs_3_1)
   
-  fig_3_1 <- (pdist | page31) +
-    plot_layout(guides = "collect") &
-    theme(legend.position = "bottom")
+  # No shared legend needed any more -- each facet's strip label ("0
+  # (zero-dose)", "1-4", "5+") already identifies its group.
+  fig_3_1 <- (pdist | page31)
 } else {
   fig_3_1 <- placeholder_plot("MISSING INPUT\n03_model_a_dataset.rds")
   n_fig31 <- NA
 }
 
 fig_titles[["fig_3_1"]] <- "Figure 3.1.  Predictor distributions by recorded dose count"
-artifacts$fig_3_1_path <- save_fig(fig_3_1, "fig_3_1", width = 8.4, height = 4.2)
+# height raised from 4.2 to 7.6 to fit 3 stacked facets per panel legibly
+# (was a single row of 2 histograms) -- matched in the fig-3-1 Rmd chunk.
+artifacts$fig_3_1_path <- save_fig(fig_3_1, "fig_3_1", width = 8.4, height = 7.6)
 
 ########################################
 # Table 3.1a — Zero-dose model summary #
@@ -850,15 +994,24 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
     readRDS(null_lga_path)$n_null_lga
   } else NA_integer_
   
+  # Labels shortened from their original 2-line descriptive form (e.g.
+  # "Raw linelisted\n(pre-dedup, both states)") to short tags (Aug 2026):
+  # at the larger, legible font size bs_for_width(8.4) now requires, the
+  # old full-length labels physically overlapped the next bar's label --
+  # 7 categories packed into 8.4in leaves under 1.2in per label, which the
+  # old ~6pt effectively-invisible text fit into but ~13-15pt legible text
+  # does not. The full description each label used to carry is already in
+  # the surrounding prose (Section III.A) and in this figure's own caption,
+  # so nothing here is losing information, only moving it out of the plot.
   wf <- tribble(
     ~step, ~label, ~n, ~type,
-    1, "Raw linelisted\n(pre-dedup, both states)", n_raw, "start",
-    2, "Duplicate rows\nremoved at import", n_dup_removed, "exclude",
-    3, "Women excluded\n(not a child record)", n_all - n_start, "exclude",
-    4, "Missing / implausible\ndistance", n_start - n_dist_ok, "exclude",
-    5, "Implausible age\n(<0 or >180 months)", n_dist_ok - n_age_ok, "exclude",
+    1, "Raw\nlinelisted", n_raw, "start",
+    2, "Duplicates\nremoved", n_dup_removed, "exclude",
+    3, "Not a\nchild record", n_all - n_start, "exclude",
+    4, "Missing\ndistance", n_start - n_dist_ok, "exclude",
+    5, "Implausible\nage", n_dist_ok - n_age_ok, "exclude",
     6, "Rimi LGA\n(backfill)", n_age_ok - n_rimi_ok, "exclude",
-    7, "Primary analytic\nsample", n_final, "end"
+    7, "Primary\nsample", n_final, "end"
   ) %>%
     mutate(delta = case_when(type == "start" ~ n, type == "end" ~ 0, TRUE ~ -n),
            remaining = cumsum(delta))
@@ -873,19 +1026,28 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
   )
   artifacts$fig_3_2_known_issues <- known_issues_lab
   
+  # bs_3_2 is bs_for_width() for this figure's real fig.width (8.4in, Rmd
+  # fig-3-2 -- was 8.6 in save_fig() below, a small drift now corrected to
+  # match exactly). All four in-plot text layers (bar totals, exclusion
+  # deltas, step labels, legend) are scaled off it via txt_mm() so they
+  # land at a comparable size to axis text once the whole figure is
+  # shrunk to Word's page width -- previously they were tiny (2.15-2.9mm,
+  # i.e. ~6-8pt BEFORE the ~0.77x page shrink) which is exactly the
+  # illegible waterfall text flagged from the rendered Word screenshot.
+  bs_3_2 <- bs_for_width(8.4)
   fig_3_2 <- ggplot(wf, aes(x = step)) +
     geom_rect(aes(xmin = step - 0.4, xmax = step + 0.4,
                   ymin = if_else(type == "exclude", remaining, 0),
                   ymax = if_else(type == "exclude", remaining + n, remaining),
                   fill = type), colour = "white", linewidth = 0.3) +
     geom_text(data = ~subset(.x, type != "exclude"),
-              aes(y = remaining / 2, label = comma(n)), size = 2.9, fontface = "bold",
+              aes(y = remaining / 2, label = comma(n)), size = txt_mm(bs_3_2 + 1), fontface = "bold",
               colour = "white", family = "serif") +
     geom_text(data = ~subset(.x, type == "exclude" & n > 0),
               aes(y = remaining + n + max(wf$n) * 0.06, label = paste0("−", comma(n))),
-              size = 2.6, fontface = "bold", colour = "#BA7517", family = "serif") +
-    geom_text(aes(y = -max(wf$remaining, na.rm = TRUE) * 0.05, label = label), size = 2.15, lineheight = 0.9,
-              colour = "#333", family = "serif") +
+              size = txt_mm(bs_3_2), fontface = "bold", colour = "#BA7517", family = "serif") +
+    geom_text(aes(y = -max(wf$remaining, na.rm = TRUE) * 0.07, label = label), size = txt_mm(bs_3_2 - 2), lineheight = 0.95,
+              colour = "#333333", family = "serif") +
     # Colourblind-safe triad (blue / amber / navy) replaces the previous
     # blue / red / green, which paired a red "exclude" bar against a green
     # "end" bar -- the one combination protanopia/deuteranopia readers
@@ -893,17 +1055,20 @@ if (require_file(ll_path, "Figure 3.2 sample waterfall") && require_file(ma_path
     scale_fill_manual(values = c("start" = "#1D6FA4", "exclude" = "#BA7517", "end" = "#10243B"),
                       labels = c("start" = "Starting N", "exclude" = "Excluded", "end" = "Analytic sample"),
                       guide = guide_legend(reverse = TRUE)) +
-    scale_y_continuous(labels = comma) +
+    scale_y_continuous(labels = comma, expand = expansion(mult = c(0.09, 0.08))) +
     scale_x_continuous(breaks = NULL) +
     labs(x = NULL, y = "Row count") +
-    theme_diss(12) +
-    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+    theme_diss(bs_3_2) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+          plot.margin = margin(t = 4, r = 8, b = 4, l = 4))
 } else {
   fig_3_2 <- placeholder_plot("MISSING INPUT\n01_linelisted_clean.rds, 01_dedup_summary.rds or 03_model_a_dataset.rds")
 }
 
 fig_titles[["fig_3_2"]] <- "Figure 3.2.  Analytic sample construction — zero-dose model"
-artifacts$fig_3_2_path <- save_fig(fig_3_2, "fig_3_2", width = 8.6, height = 4.6)
+# width/height matched exactly to the fig-3-2 Rmd chunk (fig.width=8.4,
+# fig.height=4.4; was 8.6x4.6 -- see bs_for_width() note above theme_datharm()).
+artifacts$fig_3_2_path <- save_fig(fig_3_2, "fig_3_2", width = 8.4, height = 4.4)
 
 ########################################
 # Figure 3.2b — Sample construction,   #
@@ -967,19 +1132,39 @@ if (require_file(ll_path, "Figure 3.2b sample waterfall") && require_file(ma_pat
     pull(lab) %>% paste(collapse = "  ·  ")
   artifacts$fig_3_2b_not_yet <- not_yet_lab
   
+  # Font sizes parameterised off bs_for_width() (Aug 2026 legibility fix,
+  # matching Figure 3.2 above) -- this figure was missed in that earlier
+  # pass: its three geom_text layers were still hardcoded at 2.6/2.3/1.95mm
+  # (~7.4/6.5/5.5pt BEFORE the page-width shrink, i.e. only 4-6pt once
+  # actually placed on the page), and its theme_diss(12)/strip.text size=12
+  # were flat rather than scaled to this figure's own fig.width. This
+  # figure is NOT currently referenced by any chunk in
+  # 11_dissertation_body.Rmd (fig_3_2 replaced it in the main text) --
+  # confirmed by grep, so it never reaches the knitted document as-is.
+  # FLAG if this figure is ever reinstated: rendering it with real data at
+  # bs_for_width(9.4) shows the category labels and exclusion-delta labels
+  # overlapping badly -- 7 categories split across 2 side-by-side facets
+  # leaves under 0.7in per category (half of Figure 3.2's ~1.2in for the
+  # same 7 categories in a single un-faceted row), too narrow for legible
+  # text at this size. Do not re-add this chunk to the Rmd without first
+  # shortening the category labels the way Figure 3.2's were shortened
+  # (see that figure's own comment) and switching the delta/value labels
+  # from vjust-based stacking to the offset-based positioning Figure 3.2
+  # already uses, which does not collide at a large font size.
+  bs_3_2b <- bs_for_width(9.4)
   fig_3_2b <- ggplot(wf_state, aes(x = step)) +
     geom_rect(aes(xmin = step - 0.4, xmax = step + 0.4,
                   ymin = if_else(type == "exclude", remaining, 0),
                   ymax = if_else(type == "exclude", remaining + n, remaining),
                   fill = type), colour = "white", linewidth = 0.3) +
     geom_text(data = ~subset(.x, type != "exclude"),
-              aes(y = remaining / 2, label = comma(n)), size = 2.6, fontface = "bold",
+              aes(y = remaining / 2, label = comma(n)), size = txt_mm(bs_3_2b), fontface = "bold",
               colour = "white", family = "serif") +
     geom_text(data = ~subset(.x, type == "exclude" & n > 0),
               aes(y = remaining + n, label = paste0("−", comma(n))),
-              vjust = -0.6, size = 2.3, fontface = "bold", colour = "#BA7517", family = "serif") +
-    geom_text(aes(y = 0, label = label), vjust = 1.8, size = 1.95, lineheight = 0.85,
-              colour = "#333", family = "serif") +
+              vjust = -0.6, size = txt_mm(bs_3_2b - 1), fontface = "bold", colour = "#BA7517", family = "serif") +
+    geom_text(aes(y = 0, label = label), vjust = 1.8, size = txt_mm(bs_3_2b - 3), lineheight = 0.85,
+              colour = "#333333", family = "serif") +
     facet_wrap(~state, scales = "free_y") +
     # Same colourblind-safe triad as Figure 3.2 -- see note there.
     scale_fill_manual(values = c("start" = "#1D6FA4", "exclude" = "#BA7517", "end" = "#10243B"),
@@ -988,9 +1173,8 @@ if (require_file(ll_path, "Figure 3.2b sample waterfall") && require_file(ma_pat
     scale_y_continuous(labels = comma, expand = expansion(mult = c(0.15, 0.15))) +
     scale_x_continuous(breaks = NULL) +
     labs(x = NULL, y = "Row count") +
-    theme_diss(12) +
-    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
-          strip.text = element_text(face = "bold", size = 12))
+    theme_diss(bs_3_2b) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
 } else {
   fig_3_2b <- placeholder_plot("MISSING INPUT\nsee Figure 3.2b requirements")
 }
@@ -1009,12 +1193,13 @@ coef_a <- tribble(~label, ~estimate, ~se,
   mutate(ci_lo = estimate - 1.96 * se, ci_hi = estimate + 1.96 * se,
          label = fct_rev(fct_inorder(label)))
 
+bs_3_3 <- bs_for_width(8.4)
 pA33 <- ggplot(coef_a, aes(x = estimate, y = label)) +
-  geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaa", linewidth = 0.6) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaaaaa", linewidth = 0.6) +
   geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.15, linewidth = 0.9, colour = col_sig) +
   geom_point(shape = 21, size = 3.6, stroke = 0.8, colour = "white", fill = col_sig) +
   labs(subtitle = "A. Primary specification (all predictors)", x = "Coefficient (log-odds), 95% CI", y = NULL) +
-  theme_diss(12) + theme(axis.text.y = element_text(lineheight = 0.9))
+  theme_diss(bs_3_3) + theme(axis.text.y = element_text(lineheight = 0.9))
 
 coef_b33 <- tribble(~definition, ~estimate, ~se,
                     "Primary\n(penta-ZD flag)",    a1_dist_raw$coef, a1_dist_raw$se,
@@ -1025,17 +1210,21 @@ coef_b33 <- tribble(~definition, ~estimate, ~se,
 amplification <- round(a2_dist_raw$coef / a1_dist_raw$coef, 1)
 
 pB33 <- ggplot(coef_b33, aes(x = estimate, y = definition)) +
-  geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaa", linewidth = 0.6) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaaaaa", linewidth = 0.6) +
   geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.12, linewidth = 1.0, colour = col_strict) +
   geom_point(shape = 21, size = 4.4, stroke = 0.9, colour = "white", fill = col_strict) +
   labs(subtitle = "B. Distance coefficient by zero-dose definition",
        x = "Coefficient on distance (log-odds), 95% CI", y = NULL) +
-  theme_diss(12) + theme(axis.text.y = element_text(lineheight = 0.9))
+  theme_diss(bs_3_3) + theme(axis.text.y = element_text(lineheight = 0.9))
 
 fig_3_3 <- (pA33 / pB33)
 
 fig_titles[["fig_3_3"]] <- "Figure 3.3.  Zero-dose model — primary specification and definitional amplification"
-artifacts$fig_3_3_path <- save_fig(fig_3_3, "fig_3_3", width = 8.4, height = 5.4)
+# height raised slightly (5.4 -> 6.0) -- at bs_3_3, the 2-line-wrapped
+# category labels ("Distance to\nhealth facility (km)" etc.) in a 3-row
+# panel left almost no visual gap between rows; matched in the fig-3-3
+# Rmd chunk.
+artifacts$fig_3_3_path <- save_fig(fig_3_3, "fig_3_3", width = 8.4, height = 6.0)
 
 ########################################
 # Figure 3.4 — Ward-level residuals    #
@@ -1059,16 +1248,35 @@ if (require_file(wr_path, "Figure 3.4 ward residuals")) {
     arrange(residual) %>%
     mutate(ward_lab = factor(ward_lab, levels = unique(ward_lab)))
   
+  # bs_3_4 = bs_for_width(8.6). The old axis.text.y override (a flat size=10,
+  # well BELOW theme_diss(12)'s own bs-1=11) existed to keep these long
+  # "<ward>  (<LGA>, <state>)" labels from overlapping -- rendered at real
+  # ward/LGA names (up to ~43 characters, e.g. "Dan Alhaji Yangayya
+  # (Batagarawa, Katsina)") and checked against this exact layout, the
+  # full bs_3_4-1 axis text size does NOT overlap or clip: ggplot's left
+  # margin auto-expands for y-axis text, so there was no need to shrink it
+  # below the figure's own base size. Override removed.
+  bs_3_4 <- bs_for_width(8.6)
   fig_3_4 <- ggplot(wr_top, aes(x = residual, y = ward_lab)) +
-    geom_segment(aes(x = 0, xend = residual, y = ward_lab, yend = ward_lab), colour = "#ddd", linewidth = 0.5) +
+    geom_segment(aes(x = 0, xend = residual, y = ward_lab, yend = ward_lab), colour = "#dddddd", linewidth = 0.5) +
     geom_point(aes(fill = flag_lab, size = n_children), shape = 21, stroke = 0.7, colour = "white") +
     geom_text(aes(x = residual + 1.4, label = paste0("+", formatC(residual, format = "f", digits = 1), " pp")),
-              hjust = 0, size = 2.9, family = "serif", colour = "#555") +
+              hjust = 0, size = txt_mm(bs_3_4 - 1), family = "serif", colour = "#555555") +
     scale_fill_manual(values = c("Katsina, duplication-affected list" = "#C0312D", "Not flagged" = "#1D6FA4")) +
     scale_size_continuous(range = c(2.5, 7), guide = "none") +
-    scale_x_continuous(labels = label_number(suffix = " pp")) +
-    labs(x = "Residual above model prediction (percentage points)", y = NULL) +
-    theme_diss(12) + theme(axis.text.y = element_text(size = 10))
+    # Right-side expansion widened from 0.12 to 0.28 -- at the larger,
+    # legible data-label font this figure now uses, the highest-residual
+    # row's "+12.4 pp"-style label (anchored past the point, hjust=0)
+    # rendered wider than the old expansion reserved, and clipped against
+    # the panel edge. Checked by render against the longest real residual
+    # value in the data.
+    scale_x_continuous(labels = label_number(suffix = " pp"), expand = expansion(mult = c(0.02, 0.28))) +
+    # x-axis title wrapped to two lines -- at bs_3_4-1, the single-line
+    # version was wider than the panel (this figure gives roughly 45% of
+    # its width to long "<ward> (<LGA>, <state>)" row labels) and clipped
+    # off the right edge of the page.
+    labs(x = "Residual above model prediction\n(percentage points)", y = NULL) +
+    theme_diss(bs_3_4)
 } else {
   fig_3_4 <- placeholder_plot("MISSING INPUT\n04_ward_residuals_classified.csv")
 }
@@ -1156,14 +1364,16 @@ if (map_boundaries_loaded && require_file(resid_classified_path, "Figure 3.4b wa
                         guide = steps_guide(barwidth = 6.5)) +
       scale_size_continuous(name = "Children in\nward (N)", range = c(1.5, 11), labels = comma) +
       coord_sf(xlim = extent_34b$xlim, ylim = extent_34b$ylim, expand = FALSE, clip = "off") +
-      theme_map_diss(12)
+      theme_map_diss(bs_for_width(9.5))
   }
 } else {
   fig_3_4b <- placeholder_plot("MISSING INPUT\n04_ward_residuals_classified.rds, or GADM boundaries unavailable")
 }
 
 fig_titles[["fig_3_4b"]] <- "Figure 3.4b.  Ward-level zero-dose model residuals, mapped"
-artifacts$fig_3_4b_path <- save_fig(fig_3_4b, "fig_3_4b", width = 9.5, height = 8.4, dpi = 150)
+# height matched to the fig-e-2 Rmd chunk's fig.height=7.4 (was 8.4 --
+# see bs_for_width() note above theme_datharm()).
+artifacts$fig_3_4b_path <- save_fig(fig_3_4b, "fig_3_4b", width = 9.5, height = 7.4, dpi = 150)
 
 #----------------------------------------------------------------------------
 
@@ -1186,17 +1396,18 @@ if (require_file(mb_path, "Figure 3.5 tracing outcomes")) {
   lag_d <- d35 %>% filter(!is.na(days_since_visit), days_since_visit <= 300) %>%
     mutate(rec = if_else(recovered_strict == 1, "Recovered", "Not recovered"))
   
+  bs_3_5 <- bs_for_width(8.6)
   pL35 <- ggplot(method_out, aes(x = method, y = pct, fill = outcome)) +
     geom_col(width = 0.62, colour = "white", linewidth = 0.3) +
     geom_text(aes(label = if_else(pct > 6, paste0(round(pct), "%"), "")),
-              position = position_stack(vjust = 0.5), size = 2.7, colour = "white",
+              position = position_stack(vjust = 0.5), size = txt_mm(bs_3_5 - 1), colour = "white",
               fontface = "bold", family = "serif") +
     scale_fill_manual(values = c("Confirmed (in-network)" = col_confirmed,
                                  "Off-network (verbal)" = col_offnet, "Not recovered" = col_notrec)) +
     scale_y_continuous(labels = label_number(suffix = "%"), expand = expansion(mult = c(0, 0.02))) +
     facet_wrap(~state) +
     labs(subtitle = "A. Tracing outcome by contact method", x = NULL, y = "Share of attempts") +
-    theme_diss(12)
+    theme_diss(bs_3_5)
   
   lag_meds <- lag_d %>% group_by(rec) %>% summarise(med = median(days_since_visit, na.rm = TRUE), .groups = "drop")
   # Median labels are anchored to a fixed point in the plot's empty upper-right
@@ -1207,14 +1418,21 @@ if (require_file(mb_path, "Figure 3.5 tracing outcomes")) {
   pR35 <- ggplot(lag_d, aes(x = days_since_visit, fill = rec)) +
     geom_histogram(bins = 38, position = "identity", alpha = 0.55, colour = NA) +
     geom_vline(data = lag_meds, aes(xintercept = med, colour = rec), linetype = "dashed", linewidth = 0.8) +
-    geom_text(data = lag_meds, aes(colour = rec, label = paste0(rec, ": median ", med, " d")),
-              x = lag_lab_x, y = Inf, vjust = c(1.6, 3.4), hjust = 1, size = 2.9,
+    # Label text shortened ("median" dropped, value rounded to whole days)
+    # and vjust spacing widened (1.4/3.8, was 1.6/3.4) -- at the larger,
+    # legible bs_3_5-1 font this text needs, the old longer wording ran
+    # off the left edge of this panel (~4.2in wide, half of the 8.6in
+    # two-panel figure) and the two stacked lines sat close enough to risk
+    # touching. The subtitle already says "by recovery", so "median" is
+    # redundant here.
+    geom_text(data = lag_meds, aes(colour = rec, label = paste0(rec, ": ", round(med), " d")),
+              x = lag_lab_x, y = Inf, vjust = c(1.4, 3.8), hjust = 1, size = txt_mm(bs_3_5 - 1),
               family = "serif", fontface = "bold", show.legend = FALSE) +
     scale_fill_manual(values = c("Recovered" = col_confirmed, "Not recovered" = col_notrec)) +
     scale_colour_manual(values = c("Recovered" = col_confirmed, "Not recovered" = col_notrec), guide = "none") +
     scale_y_continuous(labels = comma) +
     labs(subtitle = "B. Days since last visit, by recovery", x = "Days since last facility visit", y = "Attempts") +
-    theme_diss(12)
+    theme_diss(bs_3_5)
   
   fig_3_5 <- (pL35 | pR35) + plot_layout(widths = c(1.25, 1))
   fig_titles[["fig_3_5"]] <- "Figure 3.5.  Tracing outcomes and timing"
@@ -1228,11 +1446,13 @@ artifacts$fig_3_5_path <- save_fig(fig_3_5, "fig_3_5", width = 8.6, height = 5.4
 # Table 3.1b — Full sample vs lag-time #
 ########################################
 
+# Table 3.1b, like Table 3.1a, reports odds ratios rather than log-odds
+# coefficients (Aisha's review) -- see or_cell() definition above.
 tab_3_1b <- tribble(~term, ~c3, ~c4,
-                    "SMS / phone contact (ref: home visit)", ci_cell(b_full_sms_raw$coef, b_full_sms_raw$se), ci_cell(b_lag_sms_raw$coef, b_lag_sms_raw$se),
-                    "Distance to health facility (km)",      ci_cell(b_full_dist_raw$coef, b_full_dist_raw$se), ci_cell(b_lag_dist_raw$coef, b_lag_dist_raw$se),
-                    "Age at tracing (months)",               ci_cell(b_full_age_raw$coef, b_full_age_raw$se), ci_cell(b_lag_age_raw$coef, b_lag_age_raw$se),
-                    "Days since last facility visit",        "n/a — not in full-sample spec", ci_cell(b_lag_lag_raw$coef, b_lag_lag_raw$se),
+                    "SMS / phone contact (ref: home visit)", or_cell(b_full_sms_raw$coef, b_full_sms_raw$se), or_cell(b_lag_sms_raw$coef, b_lag_sms_raw$se),
+                    "Distance to health facility (km)",      or_cell(b_full_dist_raw$coef, b_full_dist_raw$se), or_cell(b_lag_dist_raw$coef, b_lag_dist_raw$se),
+                    "Age at tracing (months)",               or_cell(b_full_age_raw$coef, b_full_age_raw$se), or_cell(b_lag_age_raw$coef, b_lag_age_raw$se),
+                    "Days since last facility visit",        "n/a — not in full-sample spec", or_cell(b_lag_lag_raw$coef, b_lag_lag_raw$se),
                     "<em>N</em>",                            b_full_n, b_lag_n,
                     "<em>R²</em>",                      b_full_r2, b_lag_r2)
 artifacts$tab_3_1b <- tab_3_1b
@@ -1250,11 +1470,11 @@ coef_r36 <- tribble(~label, ~estimate, ~se,
          label = fct_rev(fct_inorder(label)))
 
 fig_3_6 <- ggplot(coef_r36, aes(x = estimate, y = label)) +
-  geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaa", linewidth = 0.6) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaaaaa", linewidth = 0.6) +
   geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.16, linewidth = 0.9, colour = "#BA7517") +
   geom_point(shape = 21, size = 3.8, stroke = 0.8, colour = "white", fill = "#BA7517") +
   labs(x = "Coefficient (log-odds scale), 95% CI", y = NULL) +
-  theme_diss(12) + theme(axis.text.y = element_text(lineheight = 0.9))
+  theme_diss(bs_for_width(8)) + theme(axis.text.y = element_text(lineheight = 0.9))
 
 fig_titles[["fig_3_6"]] <- "Figure 3.6.  Recovery model — coefficient plot"
 artifacts$fig_3_6_path <- save_fig(fig_3_6, "fig_3_6", width = 8, height = 3.8)
@@ -1276,19 +1496,23 @@ if (require_file(mb_path, "Figure 3.7 strict vs permissive recovery")) {
     summarise(s = pct[definition == "Strict"], p = pct[definition == "Permissive"],
               gap = p - s, ymid = (s + p) / 2, .groups = "drop")
   
+  bs_3_7 <- bs_for_width(8)
   fig_3_7 <- ggplot(rec_data, aes(x = definition, y = pct, fill = definition)) +
     geom_col(width = 0.55, alpha = 0.92) +
-    geom_text(aes(label = paste0(round(pct, 1), "%")), vjust = -0.5, size = 3.4, fontface = "bold", family = "serif") +
+    geom_text(aes(label = paste0(round(pct, 1), "%")), vjust = -0.5, size = txt_mm(bs_3_7 - 1), fontface = "bold", family = "serif") +
     geom_segment(data = gaps37, aes(x = 2.42, xend = 2.42, y = s, yend = p), inherit.aes = FALSE,
-                 colour = "#444", linewidth = 0.5, arrow = arrow(ends = "both", length = unit(0.07, "cm"))) +
+                 colour = "#444444", linewidth = 0.5, arrow = arrow(ends = "both", length = unit(0.07, "cm"))) +
     geom_text(data = gaps37, aes(x = 2.52, y = ymid, label = paste0("+", round(gap, 1), " pp")),
-              inherit.aes = FALSE, hjust = 0, size = 3.0, family = "serif", colour = "#444") +
+              inherit.aes = FALSE, hjust = 0, size = txt_mm(bs_3_7 - 2), family = "serif", colour = "#444444") +
     scale_fill_manual(values = c("Strict" = col_notrec, "Permissive" = col_offnet), guide = "none") +
     scale_y_continuous(limits = c(0, 100), labels = label_number(suffix = "%"), expand = expansion(mult = c(0, 0.05))) +
-    scale_x_discrete(expand = expansion(add = c(0.6, 0.95))) +
+    # Right-side expansion widened from 0.95 to 1.3 -- the "+XX.X pp" gap
+    # annotation needs more room at the larger, legible font size now used
+    # (checked by render: 0.95 clipped the text against the panel edge).
+    scale_x_discrete(expand = expansion(add = c(0.6, 1.3))) +
     facet_wrap(~state) +
     labs(x = NULL, y = "Recovery rate") +
-    theme_diss(12)
+    theme_diss(bs_3_7)
 } else {
   fig_3_7 <- placeholder_plot("MISSING INPUT\n03_model_b_dataset.rds")
 }
@@ -1367,14 +1591,16 @@ if (map_boundaries_loaded && require_file(dt_clean_path_37b, "Figure 3.7b off-ne
                              guide = steps_guide()) +
       scale_size_continuous(name = "Recovered cases\n(N, ward)", range = c(1.5, 11), labels = comma) +
       coord_sf(xlim = extent_37b$xlim, ylim = extent_37b$ylim, expand = FALSE, clip = "off") +
-      theme_map_diss(12)
+      theme_map_diss(bs_for_width(9.5))
   }
 } else {
   fig_3_7b <- placeholder_plot("MISSING INPUT\n01_defaultertracing_clean.rds, or GADM boundaries unavailable")
 }
 
 fig_titles[["fig_3_7b"]] <- "Figure 3.7b.  Off-network share of recovered defaulters, by ward"
-artifacts$fig_3_7b_path <- save_fig(fig_3_7b, "fig_3_7b", width = 9.5, height = 8.2, dpi = 150)
+# height matched to the fig-f-1 Rmd chunk's fig.height=7.4 (was 8.2 --
+# see bs_for_width() note above theme_datharm()).
+artifacts$fig_3_7b_path <- save_fig(fig_3_7b, "fig_3_7b", width = 9.5, height = 7.4, dpi = 150)
 
 ########################################
 # Figure 3.8 — Daily visit diagnostics #
@@ -1384,17 +1610,31 @@ pj_path <- file.path(era_dir, "06_panel_daily.rds")
 if (require_file(pj_path, "Figure 3.8 daily visit diagnostics")) {
   pj38 <- readRDS(pj_path) %>% mutate(vd = as.Date(visit_date))
   
+  # bs_3_8 = bs_for_width(9). This 3-panel-wide, 3.6in-tall figure was the
+  # worst overlap case found in testing: at the legible font size bs_3_8
+  # requires, (a) the two stacked LGA-mean labels in panel A were fine once
+  # shortened the same way as Figure 3.5's median labels, but (b) panel B's
+  # 7 weekday labels collided into an unreadable run ("SumTueWedThu...") at
+  # the old horizontal orientation, (c) panel C's subtitle clipped off the
+  # right edge of its panel, and (d) panel C's angled date labels
+  # overlapped each other. Fixed by: angling panel B's labels (matching
+  # panel C's existing convention), wrapping panel C's subtitle to two
+  # lines, widening panel C's date breaks from 4 to 6 months, and giving
+  # the whole figure a little more height (save_fig call below, and the
+  # matching fig-3-8 Rmd chunk) -- 3.6in was simply too short once every
+  # panel's text grew to a legible size.
+  bs_3_8 <- bs_for_width(9)
   hist_means <- pj38 %>% group_by(lga_clean) %>% summarise(mv = mean(n_visits, na.rm = TRUE), .groups = "drop")
-  hist_lab_x <- max(pj38$n_visits, na.rm = TRUE) * 0.97
+  hist_lab_x <- max(pj38$n_visits, na.rm = TRUE) * 0.99
   p_hist <- ggplot(pj38, aes(x = n_visits, fill = lga_clean)) +
     geom_histogram(bins = 45, position = "identity", alpha = 0.55, colour = NA) +
     geom_vline(data = hist_means, aes(xintercept = mv, colour = lga_clean), linetype = "dashed", linewidth = 0.8, show.legend = FALSE) +
-    geom_text(data = hist_means, aes(colour = lga_clean, label = paste0(lga_clean, ": mean ", round(mv), " /day")),
-              x = hist_lab_x, y = Inf, vjust = c(1.6, 3.4), hjust = 1, size = 2.9, family = "serif", fontface = "bold", show.legend = FALSE) +
+    geom_text(data = hist_means, aes(colour = lga_clean, label = paste0(lga_clean, ": ", round(mv), "/day")),
+              x = hist_lab_x, y = Inf, vjust = c(1.1, 4.3), hjust = 1, size = txt_mm(bs_3_8 - 2), family = "serif", fontface = "bold", show.legend = FALSE) +
     scale_fill_manual(values = c("Gabasawa" = "#1D6FA4", "Ungogo" = "#BA7517"), name = "LGA") +
     scale_colour_manual(values = c("Gabasawa" = "#1D6FA4", "Ungogo" = "#BA7517"), guide = "none") +
     scale_y_continuous(labels = comma) +
-    labs(subtitle = "A. Visit count distribution", x = "Daily visits", y = "LGA-days") + theme_diss(12)
+    labs(subtitle = "A. Visit count distribution", x = "Daily visits", y = "LGA-days") + theme_diss(bs_3_8)
   
   dow_lab <- c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
   p_dow <- pj38 %>% group_by(dow_num) %>% summarise(mv = mean(n_visits, na.rm = TRUE), .groups = "drop") %>%
@@ -1402,15 +1642,15 @@ if (require_file(pj_path, "Figure 3.8 daily visit diagnostics")) {
     ggplot(aes(x = dl, y = mv, fill = wk)) + geom_col(width = 0.6, alpha = 0.9) +
     scale_fill_manual(values = c("TRUE" = "#C0312D", "FALSE" = "#1D6FA4"),
                       labels = c("TRUE" = "Weekend / Friday", "FALSE" = "Weekday"), name = NULL) +
-    labs(subtitle = "B. Mean visits by weekday", x = NULL, y = "Mean visits") + theme_diss(12) +
-    theme(axis.text.x = element_text(size = 10))
+    labs(subtitle = "B. Mean visits by weekday", x = NULL, y = "Mean visits") + theme_diss(bs_3_8) +
+    theme(axis.text.x = element_text(angle = 40, hjust = 1))
   
   p_zero <- pj38 %>% mutate(ym = floor_date(vd, "month"), z = as.integer(n_visits == 0)) %>%
     group_by(ym) %>% summarise(zd = sum(z), .groups = "drop") %>%
     ggplot(aes(x = ym, y = zd)) + geom_col(fill = "#BA7517", alpha = 0.8, width = 22) +
-    scale_x_date(date_breaks = "4 months", date_labels = "%b %y") +
-    labs(subtitle = "C. Zero-visit days per month", x = NULL, y = "Zero-visit days") + theme_diss(12) +
-    theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 10))
+    scale_x_date(date_breaks = "6 months", date_labels = "%b %y") +
+    labs(subtitle = "C. Zero-visit days\nper month", x = NULL, y = "Zero-visit days") + theme_diss(bs_3_8) +
+    theme(axis.text.x = element_text(angle = 40, hjust = 1))
   
   fig_3_8 <- (p_hist | p_dow | p_zero)
   fig_titles[["fig_3_8"]] <- "Figure 3.8.  Daily facility visit diagnostics"
@@ -1418,7 +1658,9 @@ if (require_file(pj_path, "Figure 3.8 daily visit diagnostics")) {
   fig_3_8 <- placeholder_plot("MISSING INPUT\n06_panel_daily.rds")
 }
 
-artifacts$fig_3_8_path <- save_fig(fig_3_8, "fig_3_8", width = 9, height = 3.6)
+# height raised from 3.6 to 4.4 -- see the layout note above; matched in
+# the fig-3-8 Rmd chunk's fig.height too.
+artifacts$fig_3_8_path <- save_fig(fig_3_8, "fig_3_8", width = 9, height = 4.4)
 
 #----------------------------------------------------------------------------
 
@@ -1645,17 +1887,30 @@ rob_coef_rows <- tribble(
   ) %>%
   filter(!is.na(coef))
 
+# bs_for_width(8.6) -- matches the fig-weather-robustness Rmd chunk's real
+# fig.width (was 10 in save_fig() below, corrected to remove the aspect-
+# ratio mismatch). The old explicit strip.text override (flat size=11) is
+# dropped in favour of theme_diss()'s own strip.text = bs-1, which now
+# scales with the rest of the figure instead of trailing behind it.
 fig_weather_robustness <- ggplot(rob_coef_rows, aes(x = coef, y = spec)) +
-  geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaa", linewidth = 0.6) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "#aaaaaa", linewidth = 0.6) +
   geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.18, linewidth = 0.9, colour = col_sig) +
   geom_point(size = 2.8, colour = col_sig) +
   facet_wrap(~variable, scales = "free_x", ncol = 2) +
   labs(x = "Coefficient (log-visits scale), 95% CI", y = NULL) +
-  theme_diss(12) +
-  theme(strip.text = element_text(size = 11, face = "bold"), panel.spacing = unit(1.1, "lines"))
+  theme_diss(bs_for_width(8.6)) +
+  theme(panel.spacing = unit(1.1, "lines"))
 
 fig_titles[["fig_weather_robustness"]] <- "Figure 3.9.  Weather effect estimates across specifications — offset, NB-offset and spline robustness"
-artifacts$fig_weather_robustness_path <- save_fig(fig_weather_robustness, "fig_weather_robustness", width = 10, height = 5.2)
+# height raised 4.2 -> 5.6 (Aug 2026): confirmed by render at bs_for_width(8.6)
+# that the 3-row "Original"/"Offset"/"NB-offset" y-axis category text in
+# each of the 5 facet panels crowded into an unreadable stack when the
+# panel itself was only ~1.2in tall (3 rows x this 2-column facet_wrap at
+# the old 4.2in total height). panel.spacing alone does not fix this --
+# it only adds gap BETWEEN panels, not room WITHIN one for its own 3-line
+# axis -- so the figure's own height had to grow instead. width/fig.width
+# unchanged (8.6, matching the fig-weather-robustness Rmd chunk).
+artifacts$fig_weather_robustness_path <- save_fig(fig_weather_robustness, "fig_weather_robustness", width = 8.6, height = 5.6)
 
 ########################################
 # Figures 3.9b-d — Weather variable maps #
@@ -1719,7 +1974,7 @@ if (map_boundaries_loaded && require_file(precip_path_39b, "rainfall map")) {
       scale_fill_steps(low = "#F5EFE0", high = "#1D6FA4", name = "Mean monthly\nrainfall (mm)",
                        breaks = scales::breaks_pretty(n = 5), labels = comma, guide = steps_guide()) +
       coord_sf(xlim = precip_extent_39b$xlim, ylim = precip_extent_39b$ylim, expand = FALSE, clip = "off") +
-      theme_map_diss(12)
+      theme_map_diss(bs_for_width(7))
   }
 } else {
   fig_weather_rainfall <- placeholder_plot("MISSING INPUT -- rainfall map")
@@ -1753,7 +2008,7 @@ if (map_boundaries_loaded && require_file(heat_path_39b, "heat map")) {
                        breaks = scales::breaks_pretty(n = 4), labels = label_number(accuracy = 0.1),
                        guide = steps_guide()) +
       coord_sf(xlim = heat_extent_39b$xlim, ylim = heat_extent_39b$ylim, expand = FALSE, clip = "off") +
-      theme_map_diss(12)
+      theme_map_diss(bs_for_width(7))
   }
 } else {
   fig_weather_heat <- placeholder_plot("MISSING INPUT -- heat map")
@@ -1785,7 +2040,7 @@ if (map_boundaries_loaded && require_file(ndvi_path_39b, "NDVI map")) {
                        breaks = scales::breaks_pretty(n = 4), labels = label_number(accuracy = 0.01),
                        guide = steps_guide()) +
       coord_sf(xlim = ndvi_extent_39b$xlim, ylim = ndvi_extent_39b$ylim, expand = FALSE, clip = "off") +
-      theme_map_diss(12)
+      theme_map_diss(bs_for_width(7))
   }
 } else {
   fig_weather_ndvi <- placeholder_plot("MISSING INPUT -- NDVI map")
@@ -1925,13 +2180,15 @@ if (require_file(mb_path, "Figure D.1 age at tracing")) {
     scale_y_continuous(labels = comma) +
     labs(subtitle = "Age at tracing, by state", x = "Age at tracing (months)", y = "Attempts",
          fill = NULL) +
-    theme_diss(12)
+    theme_diss(bs_for_width(8.5))
 } else {
   fig_d_1 <- placeholder_plot("MISSING INPUT\n03_model_b_dataset.rds")
 }
 
 fig_titles[["fig_d_1"]] <- "Figure D.1.  Age at tracing, by state (Model B, not reported elsewhere)"
-artifacts$fig_d_1_path <- save_fig(fig_d_1, "fig_d_1", width = 7, height = 4.2)
+# width/height matched to the fig-d-1 Rmd chunk (fig.width=8.5,
+# fig.height=3.6; was 7x4.2 -- see bs_for_width() note above theme_datharm()).
+artifacts$fig_d_1_path <- save_fig(fig_d_1, "fig_d_1", width = 8.5, height = 3.6)
 
 ########################################
 # Figure D.2 — Correlation heatmaps    #
@@ -1954,22 +2211,36 @@ if (require_file(dist_summary_path, "Figure D.2 correlation heatmaps")) {
     corr_long(dist_summary$corr_b_pearson, "Model B (recovery)")
   )
   
+  bs_d_2 <- bs_for_width(10)
   fig_d_2 <- ggplot(corr_all, aes(x = var1, y = var2, fill = r)) +
     geom_tile(colour = "white", linewidth = 0.6) +
-    geom_text(aes(label = sprintf("%.2f", r)), family = "serif", size = 3.2) +
+    geom_text(aes(label = sprintf("%.2f", r)), family = "serif", size = txt_mm(bs_d_2 - 3)) +
     scale_fill_gradient2(low = "#BA7517", mid = "white", high = "#1D6FA4",
                          midpoint = 0, limits = c(-1, 1), name = "Pearson r") +
     facet_wrap(~model, scales = "free") +
     labs(subtitle = "Correlation among each model's predictors and outcome", x = NULL, y = NULL) +
-    theme_diss(11) +
-    theme(axis.text.x = element_text(angle = 35, hjust = 1),
+    theme_diss(bs_d_2) +
+    # angle raised 35 -> 90 (Aug 2026): confirmed by render that at
+    # bs_d_2's legible font size, 35-degree diagonal labels physically
+    # overlapped each other along the x-axis of both panels (e.g. "Age at
+    # reg. (months)" running into "Distance (km)"); a full vertical
+    # orientation gives each label its own column width instead of a
+    # shared diagonal band, which resolves it without shrinking the font.
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
           panel.grid.major = element_blank())
 } else {
   fig_d_2 <- placeholder_plot("MISSING INPUT\n04_distributions_summary.rds — run 03_regression.R Section 16 first")
 }
 
 fig_titles[["fig_d_2"]] <- "Figure D.2.  Correlation among each model's predictors and outcome (Pearson)"
-artifacts$fig_d_2_path <- save_fig(fig_d_2, "fig_d_2", width = 8.4, height = 4.6)
+# height raised 5.0 -> 7.2 (Aug 2026, alongside the axis-angle fix above):
+# confirmed by render that a two-line y-axis category label ("Days since
+# / last visit") bled into the adjacent row at the old, shorter height --
+# discrete tile rows are allocated equal height regardless of how many
+# lines their label wraps to, so the fix is more overall figure height,
+# not a font-size change. width unchanged (10, matching the fig-d-2 Rmd
+# chunk).
+artifacts$fig_d_2_path <- save_fig(fig_d_2, "fig_d_2", width = 10, height = 7.2)
 
 #--------------------------(PART 1 END)------------------------------#
 
@@ -2223,9 +2494,9 @@ if (require_file(ward_dead_path, "Fig5A ward deceased rate")) {
   
   fig5a_datharm <- ggplot(ward_dead_datharm, aes(x = ward_lab, y = deceased_rate_pct, fill = flag)) +
     geom_col(width = 0.65) +
-    geom_hline(yintercept = kano_avg_dead, linetype = "dashed", colour = "#555") +
+    geom_hline(yintercept = kano_avg_dead, linetype = "dashed", colour = "#555555") +
     annotate("text", x = 2, y = kano_avg_dead, label = paste0("Kano average: ", kano_avg_dead, "%"),
-             vjust = -0.6, hjust = 0, size = 3.3, colour = "#555") +
+             vjust = -0.6, hjust = 0, size = 3.3, colour = "#555555") +
     scale_fill_manual(values = c("Highest" = "#e74c3c", "Other" = "#b0b0b0"), guide = "none") +
     scale_y_continuous(labels = function(x) paste0(x, "%"), expand = expansion(mult = c(0, 0.08))) +
     coord_flip() +
