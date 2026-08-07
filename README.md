@@ -1,6 +1,6 @@
-# MSc International Health and Tropical Medicine Dissertation | Suntiparp (Khem) Somsak 
+# MSc International Health and Tropical Medicine Dissertation
 
-R pipeline and dissertation source behind the analysis of DATHARM's MCHTrack programme data (Kano and Katsina, Nigeria). Submitted as partial fulfillment of requirements for the MSc IHTM at University of Oxford, August 2026.
+R pipeline and dissertation source behind the analysis of DATHARM's MCHTrack programme data (Kano and Katsina, Nigeria). Submitted as partial fulfillment of requirements for the MSc IHTM at University of Oxford, August 2026, by Candidate ID 1102514.
 
 ---
 
